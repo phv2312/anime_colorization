@@ -27,9 +27,9 @@ MODELS:
     CH_INPUT: 6
 
 TRAIN:
-  INPUT_DIR: "./sample_dataset/1"
+  INPUT_DIR: "/home/kan/Desktop/Cinnamon/gan/Adversarial-Colorization-Of-Icons-Based-On-Structure-And-Color-Conditions/geek/full_data/HOR01_Full_Formated_Output"
   EPOCH: 1000
-  BATCH_SIZE: 4
+  BATCH_SIZE: 8
   G_LR: 0.0001
   D_LR: 0.0002
   N_WORK: 0

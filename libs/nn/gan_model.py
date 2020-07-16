@@ -53,7 +53,7 @@ class Generator(nn.Module):
     def __init__(self, ch_input, use_decode):
         super(Generator, self).__init__()
         ch_output = 3
-        base_dim = 64
+        base_dim = 16
         self.encoder = nn.Sequential(
             spectral_norm(nn.Conv2d(ch_input, base_dim * 1, 3, 1, 1)),
             nn.BatchNorm2d(base_dim * 1),
@@ -98,7 +98,7 @@ class Generator(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self, ch_input):
         super(Discriminator, self).__init__()
-        base_dim = 64
+        base_dim = 16
         self.net = nn.Sequential(
             spectral_norm(nn.Conv2d(ch_input, base_dim * 1, 3, 2, 1)),
             nn.LeakyReLU(0.2, inplace=True),

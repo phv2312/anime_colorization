@@ -40,8 +40,8 @@ def main(cfg):
     loss_weights = {} #{k:v['WEIGHT'] for k,v in _cfg.items()}
 
     # optimizer
-    color_optim = optim.Adam(color_model.parameters(), lr=cfg['TRAIN']['G_LR'], betas=(0, 0.999))
-    disc_optim = optim.Adam(disc_model.parameters(), lr=cfg['TRAIN']['D_LR'], betas=(0, 0.999))
+    color_optim = optim.Adam(color_model.parameters(), lr=cfg['TRAIN']['G_LR'], betas=(0.5, 0.999))
+    disc_optim = optim.Adam(disc_model.parameters(), lr=cfg['TRAIN']['D_LR'], betas=(0.5, 0.999))
 
     os.makedirs('samples', exist_ok=True)
     os.makedirs('weights', exist_ok=True)
@@ -78,11 +78,6 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir)
         s_im = to_device(s_im)
         ref_im = to_device(ref_im)
         ref_augment_im = to_device(ref_augment_im)
-
-        # visualize
-        vutils.save_image(s_im.detach().cpu(), filename='vis_debug_im/input.sketch.png', normalize=True, range=(0,1), padding=0)
-        vutils.save_image(ref_im, filename='vis_debug_im/input.ref.png', normalize=True, range=(0,1), padding=0)
-        vutils.save_image(ref_augment_im, filename='vis_debug_im/input.ref_augment.png', normalize=True, range=(0,1), padding=0)
 
         # predict
         G = meta['G']

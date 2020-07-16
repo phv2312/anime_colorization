@@ -17,7 +17,7 @@ def _combine_multiple_fs(fs):
     return torch.cat(same_size_fs, dim=1)
 
 class ColorModel(nn.Module):
-    def __init__(self, attn_in_dim=256):
+    def __init__(self, attn_in_dim=64):
         super(ColorModel, self).__init__()
 
         self.unet_sketch = Generator(ch_input=3, use_decode=True)

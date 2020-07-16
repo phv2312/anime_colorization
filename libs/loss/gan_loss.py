@@ -10,7 +10,6 @@ def dis_loss(D, real, fake):
     loss_fake = F.relu(1.0 + d_out_fake).mean()
     return loss_real + loss_fake
 
-
 def gen_loss(D, fake):
     d_out = D(fake)
     return -(d_out).mean()

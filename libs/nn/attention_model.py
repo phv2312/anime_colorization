@@ -10,7 +10,7 @@ def _create_matrix(shape):
 class AttentionModule(nn.Module):
     def __init__(self, in_dim):
         super(AttentionModule, self).__init__()
-        self.in_dim = in_dim
+        self.in_dim = 64 #in_dim
 
         self.to_query = nn.Linear(in_features=self.in_dim, out_features=self.in_dim, bias=False)
         self.to_key   = nn.Linear(in_features=self.in_dim, out_features=self.in_dim, bias=False)
