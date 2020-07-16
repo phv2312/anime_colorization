@@ -10,6 +10,6 @@ def create_train_transform(cfg):
 def create_test_transform(cfg):
     return create_test_transform(cfg)
 
-device = torch.device('cpu' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 def to_device(x):
     return x.to(device)

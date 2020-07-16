@@ -50,7 +50,7 @@ class PretrainedModel(nn.Module):
 
         # assuming that cnn is a nn.Sequential, so we make a new nn.Sequential
         # to put in modules that are supposed to be activated sequentially
-        model = nn.Sequential(self.normalize)
+        model = nn.Sequential() #nn.Sequential(self.normalize)
 
         i = 0  # increment every time we see a conv
         for layer in cnn.children():

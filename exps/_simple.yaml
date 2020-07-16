@@ -27,7 +27,7 @@ MODELS:
     CH_INPUT: 6
 
 TRAIN:
-  INPUT_DIR: "./sample_dataset"
+  INPUT_DIR: "./sample_dataset/1"
   EPOCH: 1000
   BATCH_SIZE: 4
   G_LR: 0.0001

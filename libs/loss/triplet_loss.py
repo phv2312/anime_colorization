@@ -92,7 +92,7 @@ class SimilarityTripletLoss(nn.Module):
         super(SimilarityTripletLoss, self).__init__()
         self.receptive_field = receptive_field
         self.n_positive = n_positive
-        self.k = 3 #k
+        self.k = 1
 
         self.loss = TripletLoss(margin=12.) #nn.TripletMarginLoss(margin=12.)
 
@@ -113,6 +113,7 @@ class SimilarityTripletLoss(nn.Module):
 
         #
         triplet_losses = 0
+        i = 0
         for b in range(0, B):
             for h in range(0, featured_H):
                 for w in range(0, featured_W):
@@ -128,11 +129,11 @@ class SimilarityTripletLoss(nn.Module):
                     if len(ske_p_vectors) > 0 and len(ske_n_vectors) > 0:
                         try:
                             _loss = self.loss(anchor=ref_vector, positive=ske_p_vectors, negative=ske_n_vectors)
+                            triplet_losses += _loss
+                            i += 1
                         except Exception as e:
-                            print (e)
+                            print ('[Triplet Loss Error T.T]' ,e)
 
-                        triplet_losses += _loss
-
-        return triplet_losses / (1e-6 + B * featured_H * featured_W)
+        return triplet_losses / (1e-6 + i)
 
 

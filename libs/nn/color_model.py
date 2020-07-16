@@ -4,7 +4,6 @@ import torch.nn.functional as F
 
 from libs.nn.attention_model import AttentionModule
 from libs.nn.gan_model import Generator
-from libs.nn.tps_model import TPS_SpatialTransformerNetwork
 
 def _combine_multiple_fs(fs):
     assert len(fs) > 0
@@ -21,22 +20,16 @@ class ColorModel(nn.Module):
     def __init__(self, attn_in_dim=256):
         super(ColorModel, self).__init__()
 
-        self.tps = TPS_SpatialTransformerNetwork(F=18, I_size=(256,256), I_r_size=(256,256), I_channel_num=3)
-
         self.unet_sketch = Generator(ch_input=3, use_decode=True)
         self.unet_refer  = Generator(ch_input=3, use_decode=False)
 
         self.attention = AttentionModule(attn_in_dim)
 
-    def forward(self, s_im, ref_im):
+    def forward(self, s_im, ref_augment_im):
         """
         :param s_im & ref_augment_im: of size (256, 256, 3)
         :return:
         """
-
-        # get augment
-        ref_augment_im, G = self.tps(ref_im)
-
         # encoding
         sketch_f = self.unet_sketch.encode(s_im)
         refer_f  = self.unet_refer.encode(ref_augment_im)
@@ -54,4 +47,4 @@ class ColorModel(nn.Module):
         # decoding to get output
         output = self.unet_sketch.decode(sketch_f)
 
-        return output, sketch_f, refer_f, G
+        return output, sketch_f, refer_f
