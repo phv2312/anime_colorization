@@ -2,8 +2,8 @@ from keras.models import load_model
 from .sketch_keras.helper import *
 
 class SketchModel:
-    def __init__(self, weight):
-        self.mod = load_model('mod.h5')
+    def __init__(self, weight_path):
+        self.mod = load_model(weight_path)
 
     def process(self, input_image):
         width = float(input_image.shape[1])
