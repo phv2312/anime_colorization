@@ -13,6 +13,73 @@ def _to_ys(idx):
 def _to_xs(idx):
     return [_[0] for _ in idx]
 
+class GridProcessing():
+    def __init__(self, G, r):
+        self.G = G.cpu().numpy()
+        self.r = r
+        self.min_threshold = 0.01
+
+        self.G_norm = self._decompose_G(self.G)
+
+    def _decompose_G(self, G):
+        B, H, W, _ = G.shape
+
+        G_xmin = np.floor(G[:,:,:,[0]] * W).astype(np.int32)
+        G_xmax = G_xmin + 1
+        G_ymin = np.floor(G[:,:,:,[1]] * H).astype(np.int32)
+        G_ymax = G_ymin + 1
+
+        G_norm = np.concatenate([G_xmin, G_ymin, G_xmax, G_ymax], axis=-1)
+        return G_norm
+
+    def get_negative_ids(self, positive_cords):
+        B, H, W, _ = self.G.shape
+
+        negative_cords = []
+        for positive_cord in positive_cords:
+            # generate negatives
+            iys = random.choices(list(range(0, H // self.r)), k=10)
+            ixs = random.choices(list(range(0, W // self.r)), k=10)
+
+            #
+            tmp_negative_cords = []
+            for ix, iy in zip(ixs, iys):
+                if (ix, iy) in [positive_cord]: continue
+                tmp_negative_cords += [(ix, iy)]
+
+            #
+            negative_cord = list(sorted(tmp_negative_cords,
+                               key=lambda elem: (elem[1] - positive_cord[1]) ** 2 + (elem[0] - positive_cord[0]) ** 2))[-1]
+
+            #
+            negative_cords += [negative_cord]
+
+        return negative_cords
+
+
+    def get_positive_ids(self, b, iy, ix):
+        B, H, W, _ = self.G.shape
+
+        #
+        src_iy_mid = int((iy + 0.5) * self.r)
+        src_ix_mid = int((ix + 0.5) * self.r)
+
+        #
+        src_G_norm = self.G_norm[b, src_iy_mid, src_ix_mid]
+        src_x_min, src_y_min, src_x_max, src_y_max = src_G_norm
+
+        if src_x_min < 0 or src_y_min < 0 or src_x_max > W // self.r or src_y_max > H // self.r:
+            return []
+
+        ix_range = [src_x_min // self.r , src_x_max // self.r + 1]
+        iy_range = [src_y_min // self.r, src_y_max // self.r + 1]
+
+        positive_cords = np.array([[(x, y) for y in range(iy_range[0], iy_range[1]) if 0 <= y <= H//self.r]
+                                   for x in range(ix_range[0], ix_range[1]) if 0 <= x <= W//self.r])
+        positive_cords = positive_cords.reshape((-1, 2))
+
+        return positive_cords
+
 
 class TripletLoss(nn.Module):
     def __init__(self, margin=12.0):
@@ -29,111 +96,49 @@ class TripletLoss(nn.Module):
 
         return losses.mean()
 
-class GridProcessing():
-    def __init__(self, G, n_positive, k):
-        self.G = G
-        self.n_positive = n_positive
-        self.k = k
-
-    def get_pos_negative_ids(self, b, y, x, receptive_field = 8):
-        """
-        :param b: idx
-        :param y: idx
-        :param x: idx
-        :return:
-        """
-
-        B, H, W, _ = self.G.size()
-        n_positive = self.n_positive
-        k = self.k
-
-        positive_ids = []
-        negative_ids = []
-
-        ix, iy = self.G[b, y, x]
-
-        # bot-left
-        ix_nw = int(floor(ix))
-        iy_nw = int(floor(iy))
-
-        # top-right
-        ix_se = ix_nw + 1
-        iy_se = iy_nw + 1
-
-        # conduct positive ids
-        for _x in range(ix_nw, ix_se + 1):
-            for _y in range(iy_nw, iy_se + 1):
-
-                if 0 <= _x <= W and 0 <= _y <= H:
-                    f_ix, f_iy = _x // receptive_field, _y // receptive_field
-                    if (f_ix, f_iy) not in positive_ids: positive_ids += [(_x, _y)]
-
-        # conduct negative ids
-        iys = random.choices(list(range(0, H // receptive_field)), k = 10)
-        ixs = random.choices(list(range(0, W // receptive_field)), k = 10)
-
-        for ix, iy in zip(ixs, iys):
-            if (ix, iy) in positive_ids: continue
-            negative_ids += [(ix, iy)]
-
-        # normalize
-        if len(positive_ids) > n_positive:
-            positive_ids = list(sorted(positive_ids, key=lambda elem: (elem[1] - y) ** 2 + (elem[0] - x) ** 2 ))
-            positive_ids = positive_ids[:n_positive]
-
-        if len(negative_ids) > (n_positive * k):
-            negative_ids = list(sorted(negative_ids, key=lambda elem: (elem[1] - y) ** 2 + (elem[0] - x) ** 2 ))[::-1]
-            negative_ids = negative_ids[:(n_positive * k)]
-
-        return positive_ids, negative_ids
-
 class SimilarityTripletLoss(nn.Module):
     def __init__(self, receptive_field=8, n_positive=2, k=2):
         super(SimilarityTripletLoss, self).__init__()
         self.receptive_field = receptive_field
-        self.n_positive = n_positive
-        self.k = 1
 
         self.loss = TripletLoss(margin=12.) #nn.TripletMarginLoss(margin=12.)
 
-    def forward(self, sketch_context_vectors, ref_context_vectors, G):
+    def forward(self, sketch_query_vectors, ref_key_vectors, G):
         """
-        :param sketch_context_vectors: of size (b, hw, n_dim)
-        :param ref_context_vectors: of size (b, hw, n_dim)
+        :param sketch_query_vectors: of size (b, hw, n_dim)
+        :param ref_key_vectors: of size (b, hw, n_dim)
         :param G: (b, h, w, 2)
         :return:
         """
-
-        #
+        grid_process= GridProcessing(G, r = 8)
         B, H, W, _ = G.size()
-        featured_H, featured_W = H // self.receptive_field, W // self.receptive_field
+        B, C, F_H, F_W = sketch_query_vectors.size()
 
-        sketch_context = sketch_context_vectors.permute(0,2,3,1)
-        ref_context    = ref_context_vectors.permute(0,2,3,1)
+        assert H == F_H * self.receptive_field and W == F_W * self.receptive_field
 
-        #
-        triplet_losses = 0
         i = 0
+        triplet_loss = 0
+        # iterate
         for b in range(0, B):
-            for h in range(0, featured_H):
-                for w in range(0, featured_W):
-                    ref_vector = ref_context[b, [h], [w]]
-                    p_ids, n_ids = GridProcessing(G, self.n_positive, self.k).get_pos_negative_ids(b,
-                                                                                h * self.receptive_field,
-                                                                                w * self.receptive_field,
-                                                                                self.receptive_field)
+            for h in range(0, F_H):
+                for w in range(0, F_W):
+                    #
+                    anchor_cords = grid_process.get_positive_ids(b, h, w) #GridProcessing(G).get_pos_ids(b, h * 8, w * 8)
+                    if len(anchor_cords) < 1: continue
 
-                    ske_p_vectors = sketch_context[b, _to_ys(p_ids), _to_xs(p_ids), :]
-                    ske_n_vectors = sketch_context[b, _to_ys(n_ids), _to_xs(n_ids), :]
+                    positive_cords = [(h, w)] * len(anchor_cords)
+                    negative_cords = grid_process.get_negative_ids(positive_cords)
 
-                    if len(ske_p_vectors) > 0 and len(ske_n_vectors) > 0:
-                        try:
-                            _loss = self.loss(anchor=ref_vector, positive=ske_p_vectors, negative=ske_n_vectors)
-                            triplet_losses += _loss
-                            i += 1
-                        except Exception as e:
-                            print ('[Triplet Loss Error T.T]' ,e)
+                    #
+                    for anchor_cord, positive_cord, negative_cord in zip(anchor_cords, positive_cords, negative_cords):
+                        anchor = sketch_query_vectors[b, :, [anchor_cord[1]], [anchor_cord[0]]]
+                        positive = ref_key_vectors[b, :, [positive_cord[1]], [positive_cord[0]]]
+                        negative = ref_key_vectors[b, :, [negative_cord[1]], [negative_cord[0]]]
 
-        return triplet_losses / (1e-6 + i)
+                        _loss = self.loss(anchor=anchor.T, positive=positive.T, negative=negative.T)
+                        triplet_loss += _loss
+                        i += 1
+
+        return triplet_loss / (1e-6 + i)
 
 

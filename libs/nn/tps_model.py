@@ -2,7 +2,13 @@ import random
 import numpy as np
 import cv2
 import PIL.Image as Image
+from math import floor
 from .thinplate import numpy as tps
+
+import matplotlib.pyplot as plt
+def imgshow(im):
+    plt.imshow(im)
+    plt.show()
 
 def warp_image_cv(img, c_src, c_dst, dshape=None):
     dshape = dshape or img.shape
@@ -61,9 +67,77 @@ class TPS:
             input_image = np.array(input_image)
 
         c_src, c_dst = random_cord()
-        warp_image, G = warp_image_cv(input_image, c_src, c_dst, dshape=(200, 200))
+        warp_image, G = warp_image_cv(input_image, c_src, c_dst, dshape=(256, 256))
 
         if is_pil:
             warp_image = Image.fromarray(warp_image)
 
         return warp_image, G
+
+    def test_invert_transform(self, input_image):
+        warp_image, G = self.augment(input_image)
+        imgshow(warp_image)
+
+        # revert back to input from warp
+        G = G.T
+
+        mapx, mapy = tps.tps_grid_to_remap(G, warp_image.shape)
+        ahihi = cv2.remap(warp_image, mapx, mapy, cv2.INTER_CUBIC)
+
+        imgshow(ahihi)
+
+    def visualize(self, input_image):
+        warp_image, G = self.augment(input_image)
+
+        h, w = warp_image.shape[:2]
+        imgshow(input_image)
+        imgshow(warp_image)
+
+        for ih in range(0, h, 10):
+            for iw in range(0, w, 10):
+                _input_image = input_image.copy()
+                _warp_image  = warp_image.copy()
+
+                ix, iy = G[ih, iw]
+                print (ix, iy)
+
+                if ix < 0.01 or iy <= 0.01:
+                    print('continue')
+                    #continue
+
+                ix = np.clip(ix, 0., 1.)
+                iy = np.clip(iy, 0., 1.)
+
+                ix *= w #((ix + 1) / 2) * (w - 1)
+                iy *= h
+
+                # bot-left
+                ix_nw = int(floor(ix))
+                iy_nw = int(floor(iy))
+
+                # top-right
+                ix_se = ix_nw + 1
+                iy_se = iy_nw + 1
+
+                # conduct positive ids
+                positive_ids = []
+                for _x in range(ix_nw, ix_se + 1):
+                    for _y in range(iy_nw, iy_se + 1):
+
+                        if 0 <= _x <= w and 0 <= _y <= h:
+                            positive_ids += [(_x, _y)]
+
+                # visualize
+                cv2.circle(_warp_image, (iw, ih), radius=3, color=(255,255,0), thickness=3)
+                print (positive_ids)
+                for _x, _y in positive_ids:
+                    cv2.circle(_input_image, (_x, _y), radius=2, color=(255,0,255), thickness=3)
+
+                imgshow(np.concatenate([_input_image, _warp_image], axis=1))
+
+if __name__ == '__main__':
+    input_image= cv2.imread("/home/kan/Desktop/Cinnamon/gan/self_augment_color/sample_dataset/1/color/A0001.png")
+    input_image = cv2.resize(input_image, dsize=(256,256))
+    TPS().test_invert_transform(input_image)
+
+

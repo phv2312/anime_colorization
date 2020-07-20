@@ -28,9 +28,9 @@ MODELS:
 
 TRAIN:
   INPUT_DIR: "/home/kan/Desktop/Cinnamon/gan/Adversarial-Colorization-Of-Icons-Based-On-Structure-And-Color-Conditions/geek/full_data/hor01_sample"
-  EPOCH: 1000
+  EPOCH: 10000
   BATCH_SIZE: 8
   G_LR: 0.0001
   D_LR: 0.0002
-  N_WORK: 0
+  N_WORK: 3
 

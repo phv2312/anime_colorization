@@ -4,17 +4,14 @@ import os
 import yaml
 
 from torch.utils import data
-import torchvision.utils as vutils
 from torch.utils.tensorboard import SummaryWriter
 import torch.optim as optim
 
-
-from libs.utils.flow import to_device, create_train_transform
+from libs.utils.flow import to_device, create_train_transform, save_model, save_image_local, save_image_tensorboard
 from libs.loss.gan_loss import dis_loss, gen_loss
 from libs.loss.content_style_loss import L1StyleContentLoss
 from libs.loss.triplet_loss import SimilarityTripletLoss
 from libs.nn.color_model import ColorModel, Discriminator
-#from libs.nn.gan_model import Discriminator
 
 from libs.dataset.anime_dataset import OneImageAnimeDataset as AnimeDataset
 
@@ -89,7 +86,7 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
 
         # predict
         G = meta['G']
-        o_im, sketch_f, refer_f = color_model(ref_augment_im, s_im)
+        o_im, sketch_queries_f, refer_key_f = color_model(ref_augment_im, s_im)
 
         # loss
         ### >> for discriminator
@@ -106,7 +103,7 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
         style_score, content_score, l1_score = l1_style_content_loss(o_im, ref_im)
 
         ### >> for attention & gan generator
-        sim_triplet_score = 0. #sim_triplet_loss(sketch_f, refer_f, G)
+        sim_triplet_score = sim_triplet_loss(sketch_queries_f, refer_key_f, G)
         gan_gen_score = gen_loss(disc_model, input_fake)
 
         style_score *= lws['style']
@@ -122,7 +119,7 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
 
         global_iter += 1
         print('\t[Iter]: %d, [Style]:%.3f, [Content]:%.3f, [L1]:%.3f, [TRIPLET]:%.3f, [GAN_G]:%.3f, [GAN_D]:%.3f' %
-              (global_iter, style_score.item() , content_score.item(), l1_score.item(), 0.,
+              (global_iter, style_score.item() , content_score.item(), l1_score.item(), sim_triplet_score.item(),
                gan_gen_score.item(), gan_dis_score.item())
         )
 
@@ -130,15 +127,7 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
             """
             >> Save weights
             """
-            save_G_path = os.path.join(weight_dir, '{:08d}.G.pth'.format(global_iter))
-            save_D_path = os.path.join(weight_dir, '{:08d}.D.pth'.format(global_iter))
-            save_optimG_path = os.path.join(weight_dir, '{:08d}.optimG.pth'.format(global_iter))
-            save_optimD_path = os.path.join(weight_dir, '{:08d}.optimD.pth'.format(global_iter))
-
-            torch.save(color_model.state_dict(), save_G_path)
-            torch.save(disc_model.state_dict(), save_D_path)
-            torch.save(color_optimzier.state_dict(), save_optimG_path)
-            torch.save(disc_optimizer.state_dict(), save_optimD_path)
+            save_model(global_iter, weight_dir, color_model, disc_model, color_optimzier, disc_optimizer)
 
             """
             >> Visualize 
@@ -148,28 +137,16 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
             with torch.no_grad():
                 o_im, _, _ = color_model(ref_augment_im, s_im)
 
-            save_output_path = os.path.join(vis_dir, '{:08d}.output.png'.format(global_iter))
-            save_sketch_path = os.path.join(vis_dir, '{:08d}.sketch.png'.format(global_iter))
-            save_ref_augment_path = os.path.join(vis_dir, '{:08d}.ref_augment.png'.format(global_iter))
-            save_target_path = os.path.join(vis_dir, '{:08d}.target.png'.format(global_iter))
+            color_model.train()
 
-            vutils.save_image(o_im, save_output_path, normalize=True, range=(-1,1))
-            vutils.save_image(s_im, save_sketch_path, normalize=True, range=(-1, 1))
-            vutils.save_image(ref_augment_im, save_ref_augment_path, normalize=True, range=(-1, 1))
-            vutils.save_image(ref_im, save_target_path, normalize=True, range=(-1, 1))
+            save_image_local(global_iter, writer,
+                             style_score, content_score, l1_score,sim_triplet_score, gan_gen_score, gan_dis_score,
+                             o_im, s_im, ref_augment_im, ref_im)
 
             """
             Tensor-board
             """
-            for _loss_name, _loss_val in zip(['style', 'content', 'l1', 'triplet', 'gan_g', 'gan_d'],
-                                             [style_score, content_score, l1_score, sim_triplet_score, gan_gen_score,
-                                              gan_dis_score]):
-                writer.add_scalar('train/loss/%s' % _loss_name, _loss_val, global_iter)
-
-            for _image_name, _image_tensor in zip(['output', 'sketch', 'reference', 'target'],
-                                                  [o_im, s_im, ref_augment_im, ref_im]):
-                writer.add_image('train/%s' % _image_name, vutils.make_grid(_image_tensor, normalize=True, range=(-1, 1)),
-                                 global_iter)
+            save_image_tensorboard(global_iter, vis_dir, o_im, s_im, ref_augment_im, ref_im)
 
 if __name__ == '__main__':
     main()

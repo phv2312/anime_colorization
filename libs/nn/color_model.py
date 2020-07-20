@@ -51,12 +51,13 @@ class ResidulBlock(nn.Module):
             x = self.conv_sc(x)
         return x + h
 
-
 class EncoderS(nn.Module):
     def __init__(self):
         super(EncoderS, self).__init__()
         base_dim = 16
         ch_style = 1
+        self.hook_outputs = []
+
         self.model = nn.Sequential(
             spectral_norm(nn.Conv2d(ch_style, base_dim * 1, 3, 1, 1)),
             nn.BatchNorm2d(base_dim * 1),
@@ -72,15 +73,32 @@ class EncoderS(nn.Module):
             nn.AvgPool2d(2),
         )
 
-    def forward(self, image):
-        return self.model(image)
+        # add hook
+        for idx in [3, 7]:
+            self.model[idx].register_forward_hook(self.hook)
 
+    def hook(self, model, input, output):
+        self.hook_outputs += [output]
+
+    def forward(self, image):
+        self.hook_outputs = []
+
+        last_feature = self.model(image)
+        b, c, h, w = last_feature.size()
+
+        # aggregate
+        previous_features = [F.interpolate(feature, size=(h,w)) for feature in self.hook_outputs]
+        last_feature = torch.cat(previous_features + [last_feature], dim=1)
+
+        return last_feature
 
 class EncoderR(nn.Module):
     def __init__(self):
         super(EncoderR, self).__init__()
         base_dim = 16
         ch_style = 3
+        self.hook_outputs = []
+
         self.model = nn.Sequential(
             spectral_norm(nn.Conv2d(ch_style, base_dim * 1, 3, 1, 1)),
             nn.BatchNorm2d(base_dim * 1),
@@ -96,8 +114,24 @@ class EncoderR(nn.Module):
             nn.AvgPool2d(2),
         )
 
+        # add hook
+        for idx in [3, 7]:
+            self.model[idx].register_forward_hook(self.hook)
+
+    def hook(self, model, input, output):
+        self.hook_outputs += [output]
+
     def forward(self, image):
-        return self.model(image)
+        self.hook_outputs = []
+
+        last_feature = self.model(image)
+        b, c, h, w = last_feature.size()
+
+        # aggregate
+        previous_features = [F.interpolate(feature, size=(h, w)) for feature in self.hook_outputs]
+        last_feature = torch.cat(previous_features + [last_feature], dim=1)
+
+        return last_feature
 
 
 class DecoderS(nn.Module):
@@ -105,7 +139,7 @@ class DecoderS(nn.Module):
         super(DecoderS, self).__init__()
         base_dim = 16
         self.model = nn.Sequential(
-            spectral_norm(nn.Conv2d(base_dim * 4, base_dim * 4, 3, 1, 1)),
+            spectral_norm(nn.Conv2d(112, base_dim * 4, 3, 1, 1)),
             ResidulBlock(base_dim * 4, base_dim * 4),
             ResidulBlock(base_dim * 4, base_dim * 4),
             ResidulBlock(base_dim * 4, base_dim * 4),
@@ -132,9 +166,10 @@ class ColorModel(nn.Module):
         self.encoderS = EncoderS()
         self.decoderS = DecoderS()
 
-        self.tokeys = nn.Linear(64, 64, bias=False)
-        self.toqueries = nn.Linear(64, 64, bias=False)
-        self.tovalues = nn.Linear(64, 64, bias=False)
+        hid_dim = 112
+        self.tokeys = nn.Linear(hid_dim, hid_dim, bias=False)
+        self.toqueries = nn.Linear(hid_dim, hid_dim, bias=False)
+        self.tovalues = nn.Linear(hid_dim, hid_dim, bias=False)
 
     def forward(self, reference, sketch):
         reference_features = self.encoderG(reference)
@@ -145,13 +180,18 @@ class ColorModel(nn.Module):
         reference_features_ = reference_features.view(b, c, h * w).contiguous().permute(0, 2, 1)
         sketch_features_ = sketch_features.view(b, c, h * w).contiguous().permute(0, 2, 1)
 
-        sketch_features = self.attention(reference_features_, sketch_features_)
+        sketch_features, keys, queries = self.attention(reference_features_, sketch_features_)
+
+        #
         sketch_features = sketch_features.permute(0, 2, 1).contiguous().view(b, c, h, w)
+
+        keys = keys.permute(0, 2, 1).contiguous().view(b, c, h, w)
+        queries = queries.permute(0, 2, 1).contiguous().view(b, c, h, w)
 
         #
         output = self.decoderS(sketch_features)
 
-        return output, [] , []
+        return output, queries , keys
 
     def attention(self, reference_features_, sketch_features_):
         d = reference_features_.size()[-1]
@@ -168,13 +208,12 @@ class ColorModel(nn.Module):
 
         out = torch.bmm(dot, values)
 
-        return out + sketch_features_
+        return out + sketch_features_, keys, queries
 
 # generator
 class Generator(nn.Module):
     def __init__(self, ch_style, ch_content):
         super(Generator, self).__init__()
-        ch_input = ch_style + ch_content
         ch_output = 3
         base_dim = 64
         self.style_encoder = nn.Sequential(
