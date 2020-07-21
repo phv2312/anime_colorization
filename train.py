@@ -12,8 +12,9 @@ from libs.loss.gan_loss import dis_loss, gen_loss
 from libs.loss.content_style_loss import L1StyleContentLoss
 from libs.loss.triplet_loss import SimilarityTripletLoss
 from libs.nn.color_model import ColorModel, Discriminator
-
-from libs.dataset.anime_dataset import OneImageAnimeDataset as AnimeDataset
+from libs.utils.lr import get_scheduler
+#from libs.dataset.anime_dataset import OneImageAnimeDataset as AnimeDataset
+from libs.dataset.anime_dataset_akari import AnimeDataset
 
 @click.command()
 @click.option('--cfg', default='./exps/_simple.yaml', help='Path to Config Path')
@@ -26,7 +27,7 @@ def main(cfg):
 
     # dataset
     _cfg = cfg['TRAIN']
-    train_dataset = AnimeDataset(input_dir=_cfg['INPUT_DIR'], is_train=True, transform=create_train_transform(cfg))
+    train_dataset = AnimeDataset(root_dir=_cfg['INPUT_DIR']) #AnimeDataset(input_dir=_cfg['INPUT_DIR'], is_train=True, transform=create_train_transform(cfg))
     train_loader  = data.DataLoader(train_dataset, batch_size=_cfg['BATCH_SIZE'], shuffle=True, num_workers=_cfg['N_WORK'])
 
     # model
@@ -46,6 +47,10 @@ def main(cfg):
     color_optim = optim.Adam(color_model.parameters(), lr=cfg['TRAIN']['G_LR'], betas=(0.5, 0.999))
     disc_optim = optim.Adam(disc_model.parameters(), lr=cfg['TRAIN']['D_LR'], betas=(0.5, 0.999))
 
+    # lr scheduler
+    color_scheduler = optim.lr_scheduler.StepLR(color_optim, step_size=100, gamma=0.1)
+    disc_scheduler  = optim.lr_scheduler.StepLR(disc_optim, step_size=100, gamma=0.1)
+
     os.makedirs(vis_dir, exist_ok=True)
     os.makedirs(weight_dir, exist_ok=True)
     for epoch_id in range(cfg['TRAIN']['EPOCH']):
@@ -53,6 +58,9 @@ def main(cfg):
 
         train(train_loader, (color_model, disc_model), (l1_style_content_loss, sim_triplet_loss),
               loss_weights, (color_optim, disc_optim), vis_dir, weight_dir, writer)
+
+        color_scheduler.step(epoch_id + 1)
+        disc_scheduler.step(epoch_id + 1)
 
     writer.close()
 
@@ -103,7 +111,7 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
         style_score, content_score, l1_score = l1_style_content_loss(o_im, ref_im)
 
         ### >> for attention & gan generator
-        sim_triplet_score = sim_triplet_loss(sketch_queries_f, refer_key_f, G)
+        sim_triplet_score = 0. #sim_triplet_loss(sketch_queries_f, refer_key_f, G)
         gan_gen_score = gen_loss(disc_model, input_fake)
 
         style_score *= lws['style']
@@ -119,7 +127,7 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
 
         global_iter += 1
         print('\t[Iter]: %d, [Style]:%.3f, [Content]:%.3f, [L1]:%.3f, [TRIPLET]:%.3f, [GAN_G]:%.3f, [GAN_D]:%.3f' %
-              (global_iter, style_score.item() , content_score.item(), l1_score.item(), sim_triplet_score.item(),
+              (global_iter, style_score.item() , content_score.item(), l1_score.item(), 0.,
                gan_gen_score.item(), gan_dis_score.item())
         )
 

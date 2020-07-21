@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 import PIL.Image as Image
 from math import floor
-from .thinplate import numpy as tps
+from thinplate import numpy as tps
 
 import matplotlib.pyplot as plt
 def imgshow(im):
@@ -93,8 +93,8 @@ class TPS:
         imgshow(input_image)
         imgshow(warp_image)
 
-        for ih in range(0, h, 10):
-            for iw in range(0, w, 10):
+        for ih in range(60, h, 20):
+            for iw in range(0, w, 20):
                 _input_image = input_image.copy()
                 _warp_image  = warp_image.copy()
 
@@ -103,7 +103,7 @@ class TPS:
 
                 if ix < 0.01 or iy <= 0.01:
                     print('continue')
-                    #continue
+                    continue
 
                 ix = np.clip(ix, 0., 1.)
                 iy = np.clip(iy, 0., 1.)
@@ -138,6 +138,6 @@ class TPS:
 if __name__ == '__main__':
     input_image= cv2.imread("/home/kan/Desktop/Cinnamon/gan/self_augment_color/sample_dataset/1/color/A0001.png")
     input_image = cv2.resize(input_image, dsize=(256,256))
-    TPS().test_invert_transform(input_image)
+    TPS().visualize(input_image)
 
 
