@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 import PIL.Image as Image
 from math import floor
-from thinplate import numpy as tps
+from .thinplate import numpy as tps
 
 import matplotlib.pyplot as plt
 def imgshow(im):

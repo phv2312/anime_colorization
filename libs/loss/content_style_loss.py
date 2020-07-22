@@ -19,6 +19,24 @@ def gram_matrix(input):
     # by dividing by the number of element in each feature maps.
     return G.div(a * b * c * d)
 
+class FeatureExtraction2(nn.Module):
+    def __init__(self):
+        super(FeatureExtraction2, self).__init__()
+
+        model = models.vgg19(pretrained=True)
+        self.layer = model.features
+
+        self.extracted_layer_name = ['1', '6', '11', '20', '29']
+
+    def forward(self, x):
+        outputs = []
+        for _id, module in self.layer._modules.items():
+            x = module(x)
+            if str(_id) in self.extracted_layer_name:
+                outputs.append(x)
+
+        return outputs
+
 
 class FeatureExtraction(nn.Module):
     """
@@ -33,9 +51,9 @@ class FeatureExtraction(nn.Module):
         self.feature_blobs = []
         self.register_hook()
 
-        # freeze weights
-        for layer in self.model.parameters():
-            layer.requires_grad = False
+        # # freeze weights
+        # for layer in self.model.parameters():
+        #     layer.requires_grad = False
 
     def hook_feature(self, module, input, output):
         self.feature_blobs.append(output.data)
@@ -62,7 +80,7 @@ class L1StyleContentLoss(nn.Module):
         self.content_layers = content_layers
         self.style_layers = style_layers
 
-        self.feature_extractor = FeatureExtraction(models.vgg19(pretrained=True).eval())
+        self.feature_extractor = FeatureExtraction2() #FeatureExtraction(models.vgg19(pretrained=True).eval())
 
     def forward(self, predict, target):
         """
@@ -74,13 +92,16 @@ class L1StyleContentLoss(nn.Module):
         predict_features = self.feature_extractor(predict)
         target_features  = self.feature_extractor(target)
 
-        with torch.no_grad():
-            content_loss = 0.
-            style_loss = 0.
-            for predict_feature, target_feature in zip(predict_features, target_features):
-                content_loss += F.l1_loss(predict_feature, target_feature)
-                style_loss += F.l1_loss(gram_matrix(predict_feature), gram_matrix(target_feature))
+        content_loss = 0.
+        style_loss = 0.
+        for predict_feature, target_feature in zip(predict_features, target_features):
+            content_loss += F.l1_loss(predict_feature, target_feature)
+            style_loss += F.l1_loss(gram_matrix(predict_feature), gram_matrix(target_feature))
 
-            l1_loss = F.l1_loss(predict, target)
+        l1_loss = F.l1_loss(predict, target)
 
         return style_loss, content_loss, l1_loss
+
+if __name__ == '__main__':
+    feature_extract = FeatureExtraction2().eval()
+    feature_extract(torch.rand(size=(1,3,256,256)))

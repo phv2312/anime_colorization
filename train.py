@@ -12,9 +12,10 @@ from libs.loss.gan_loss import dis_loss, gen_loss
 from libs.loss.content_style_loss import L1StyleContentLoss
 from libs.loss.triplet_loss import SimilarityTripletLoss
 from libs.nn.color_model import ColorModel, Discriminator
-from libs.utils.lr import get_scheduler
-#from libs.dataset.anime_dataset import OneImageAnimeDataset as AnimeDataset
-from libs.dataset.anime_dataset_akari import AnimeDataset
+from libs.dataset.anime_dataset import OneImageAnimeDataset as AnimeDataset
+
+def ensure_loss(loss):
+    assert loss.requires_grad == True, 'Loss without gradient'
 
 @click.command()
 @click.option('--cfg', default='./exps/_simple.yaml', help='Path to Config Path')
@@ -27,7 +28,7 @@ def main(cfg):
 
     # dataset
     _cfg = cfg['TRAIN']
-    train_dataset = AnimeDataset(root_dir=_cfg['INPUT_DIR']) #AnimeDataset(input_dir=_cfg['INPUT_DIR'], is_train=True, transform=create_train_transform(cfg))
+    train_dataset = AnimeDataset(input_dir=_cfg['INPUT_DIR'], is_train=True, transform=create_train_transform(cfg))
     train_loader  = data.DataLoader(train_dataset, batch_size=_cfg['BATCH_SIZE'], shuffle=True, num_workers=_cfg['N_WORK'])
 
     # model
@@ -41,7 +42,7 @@ def main(cfg):
     _cfg = cfg['LOSSES']
     l1_style_content_loss = L1StyleContentLoss(content_layers=_cfg['CONTENT']['LAYER'], style_layers=_cfg['STYLE']['LAYER']).cuda()
     sim_triplet_loss = SimilarityTripletLoss(n_positive=_cfg['TRIPLET']['N_POSITIVE'], k=_cfg['TRIPLET']['K']).cuda()
-    loss_weights = {} #{k:v['WEIGHT'] for k,v in _cfg.items()}
+    loss_weights = {}
 
     # optimizer
     color_optim = optim.Adam(color_model.parameters(), lr=cfg['TRAIN']['G_LR'], betas=(0.5, 0.999))
@@ -80,9 +81,9 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
     l1_style_content_loss, sim_triplet_loss = losses
     lws = {
         'triplet': 1.,
-        'l1': 30.,
+        'l1': 50.,
         'gan_gen': 1.,
-        'style': 50.,
+        'style': 30.,
         'content': 0.01
     }
 
@@ -114,6 +115,9 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
         sim_triplet_score = 0. #sim_triplet_loss(sketch_queries_f, refer_key_f, G)
         gan_gen_score = gen_loss(disc_model, input_fake)
 
+        #
+        [ensure_loss(l) for l in [style_score, content_score, l1_score, gan_gen_score, gan_dis_score]]
+
         style_score *= lws['style']
         content_score *= lws['content']
         l1_score *= lws['l1']
@@ -131,7 +135,7 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
                gan_gen_score.item(), gan_dis_score.item())
         )
 
-        if global_iter % 10 == 0:
+        if global_iter % 1 == 0:
             """
             >> Save weights
             """
