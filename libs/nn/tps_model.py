@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 import PIL.Image as Image
 from math import floor
-from .thinplate import numpy as tps
+from libs.nn.thinplate import numpy as tps
 
 import matplotlib.pyplot as plt
 def imgshow(im):
@@ -11,14 +11,17 @@ def imgshow(im):
     plt.show()
 
 def warp_image_cv(img, c_src, c_dst, dshape=None):
+
     dshape = dshape or img.shape
     theta = tps.tps_theta_from_points(c_src, c_dst, reduced=True)
+
     grid = tps.tps_grid(theta, c_dst, dshape)
     #print (grid.shape)
     mapx, mapy = tps.tps_grid_to_remap(grid, img.shape)
-    return cv2.remap(img, mapx, mapy, cv2.INTER_CUBIC), grid
+    return cv2.remap(img, mapx, mapy, cv2.INTER_CUBIC), theta
 
 def random_cord():
+    random.seed(2312)
     # initialize ...
     c_src = [
         [random.uniform(0, 0.15), random.uniform(0, 0.15)],
@@ -54,6 +57,9 @@ def random_cord():
 
     return np.array(c_src), np.array(c_dst)
 
+theta = None
+c_dst_ = None
+
 class TPS:
     def augment(self, input_image):
         """
@@ -67,15 +73,15 @@ class TPS:
             input_image = np.array(input_image)
 
         c_src, c_dst = random_cord()
-        warp_image, G = warp_image_cv(input_image, c_src, c_dst, dshape=(256, 256))
+        warp_image, theta = warp_image_cv(input_image, c_src, c_dst, dshape=(256, 256))
 
         if is_pil:
             warp_image = Image.fromarray(warp_image)
 
-        return warp_image, G
+        return warp_image, theta, c_dst
 
     def test_invert_transform(self, input_image):
-        warp_image, G = self.augment(input_image)
+        warp_image, G, c_dst = self.augment(input_image)
         imgshow(warp_image)
 
         # revert back to input from warp
@@ -92,6 +98,16 @@ class TPS:
         h, w = warp_image.shape[:2]
         imgshow(input_image)
         imgshow(warp_image)
+
+        # check if resize is still true
+        input_image_resize = cv2.resize(input_image, dsize=(32, 32))
+        G = tps.tps_grid(theta_, c_dst_, (32, 32))
+        print (theta_)
+        mapx, mapy = tps.tps_grid_to_remap(G, (32, 32))
+        output_warp_image  = cv2.remap(input_image_resize, mapx, mapy, cv2.INTER_CUBIC)
+
+        imgshow(input_image_resize)
+        imgshow(output_warp_image)
 
         for ih in range(60, h, 20):
             for iw in range(0, w, 20):

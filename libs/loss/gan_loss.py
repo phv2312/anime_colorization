@@ -13,3 +13,4 @@ def dis_loss(D, real, fake):
 def gen_loss(D, fake):
     d_out = D(fake)
     return -(d_out).mean()
+

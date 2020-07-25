@@ -41,7 +41,7 @@ def main(cfg):
     # loss
     _cfg = cfg['LOSSES']
     l1_style_content_loss = L1StyleContentLoss(content_layers=_cfg['CONTENT']['LAYER'], style_layers=_cfg['STYLE']['LAYER']).cuda()
-    sim_triplet_loss = SimilarityTripletLoss(n_positive=_cfg['TRIPLET']['N_POSITIVE'], k=_cfg['TRIPLET']['K']).cuda()
+    sim_triplet_loss = SimilarityTripletLoss().cuda()
     loss_weights = {}
 
     # optimizer
@@ -49,8 +49,8 @@ def main(cfg):
     disc_optim = optim.Adam(disc_model.parameters(), lr=cfg['TRAIN']['D_LR'], betas=(0.5, 0.999))
 
     # lr scheduler
-    color_scheduler = optim.lr_scheduler.StepLR(color_optim, step_size=100, gamma=0.1)
-    disc_scheduler  = optim.lr_scheduler.StepLR(disc_optim, step_size=100, gamma=0.1)
+    color_scheduler = optim.lr_scheduler.StepLR(color_optim, step_size=1000, gamma=0.1)
+    disc_scheduler  = optim.lr_scheduler.StepLR(disc_optim, step_size=1000, gamma=0.1)
 
     os.makedirs(vis_dir, exist_ok=True)
     os.makedirs(weight_dir, exist_ok=True)
@@ -88,13 +88,12 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
     }
 
     for batch_id, batch_info in enumerate(loader):
-        s_im, ref_im, ref_augment_im, meta = batch_info
+        s_im, ref_im, ref_augment_im, theta, c_dst = batch_info
         s_im = to_device(s_im)
         ref_im = to_device(ref_im)
         ref_augment_im = to_device(ref_augment_im)
 
         # predict
-        G = meta['G']
         o_im, sketch_queries_f, refer_key_f = color_model(ref_augment_im, s_im)
 
         # loss
@@ -112,11 +111,11 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
         style_score, content_score, l1_score = l1_style_content_loss(o_im, ref_im)
 
         ### >> for attention & gan generator
-        sim_triplet_score = 0. #sim_triplet_loss(sketch_queries_f, refer_key_f, G)
+        sim_triplet_score = sim_triplet_loss(sketch_queries_f, refer_key_f, theta, c_dst)
         gan_gen_score = gen_loss(disc_model, input_fake)
 
         #
-        [ensure_loss(l) for l in [style_score, content_score, l1_score, gan_gen_score, gan_dis_score]]
+        #[ensure_loss(l) for l in [style_score, content_score, l1_score, gan_gen_score, gan_dis_score]]
 
         style_score *= lws['style']
         content_score *= lws['content']
@@ -131,11 +130,11 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
 
         global_iter += 1
         print('\t[Iter]: %d, [Style]:%.3f, [Content]:%.3f, [L1]:%.3f, [TRIPLET]:%.3f, [GAN_G]:%.3f, [GAN_D]:%.3f' %
-              (global_iter, style_score.item() , content_score.item(), l1_score.item(), 0.,
+              (global_iter, style_score.item() , content_score.item(), l1_score.item(), sim_triplet_score.item(),
                gan_gen_score.item(), gan_dis_score.item())
         )
 
-        if global_iter % 1 == 0:
+        if global_iter % 10 == 0:
             """
             >> Save weights
             """

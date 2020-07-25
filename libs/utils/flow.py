@@ -2,6 +2,11 @@ import torch
 import os
 from torchvision.transforms import transforms
 from torchvision import utils as vutils
+import matplotlib.pyplot as plt
+
+def imgshow(im):
+    plt.imshow(im)
+    plt.show()
 
 def create_train_transform(cfg):
     return transforms.Compose([
@@ -11,12 +16,17 @@ def create_train_transform(cfg):
     ])
 
 def create_test_transform(cfg):
-    return create_test_transform(cfg)
+    return create_train_transform(cfg)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 def to_device(x):
     return x.to(device)
 
+def load_model(model, weight_path):
+    model.load_state_dict(torch.load(weight_path, map_location='cpu'))
+    return model
+
+from copy import deepcopy
 def save_model(global_iter, weight_dir, color_model, disc_model, color_optimizer, disc_optimizer):
     save_G_path = os.path.join(weight_dir, '{:08d}.G.pth'.format(global_iter))
     save_D_path = os.path.join(weight_dir, '{:08d}.D.pth'.format(global_iter))

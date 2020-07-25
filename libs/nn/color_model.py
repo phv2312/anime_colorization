@@ -56,7 +56,8 @@ class EncoderS(nn.Module):
         super(EncoderS, self).__init__()
         base_dim = 16
         ch_style = 1
-        self.hook_outputs = []
+        self.hook_features = []
+        self.hook_convs = []
 
         self.model = nn.Sequential(
             spectral_norm(nn.Conv2d(ch_style, base_dim * 1, 3, 1, 1)),
@@ -71,33 +72,46 @@ class EncoderS(nn.Module):
             nn.BatchNorm2d(base_dim * 4),
             nn.LeakyReLU(0.2, inplace=True),
             nn.AvgPool2d(2),
+            spectral_norm(nn.Conv2d(base_dim * 4, base_dim * 4, 3, 1, 1)),
+            nn.BatchNorm2d(base_dim * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.AvgPool2d(2),
         )
 
         # add hook
-        for idx in [3, 7]:
-            self.model[idx].register_forward_hook(self.hook)
+        for idx in [3, 7, 11]:
+            self.model[idx].register_forward_hook(self.hook_f)
 
-    def hook(self, model, input, output):
-        self.hook_outputs += [output]
+        for idx in [0, 4, 8, 12]:
+            self.model[idx].register_forward_hook(self.hook_c)
+
+    def hook_f(self, model, input, output):
+        self.hook_features += [output]
+
+    def hook_c(self, model, input, output):
+        self.hook_convs += [output]
 
     def forward(self, image):
-        self.hook_outputs = []
+        self.hook_features = []
+        self.hook_convs = []
 
         last_feature = self.model(image)
         b, c, h, w = last_feature.size()
 
         # aggregate
-        previous_features = [F.interpolate(feature, size=(h,w)) for feature in self.hook_outputs]
-        last_feature = torch.cat(previous_features + [last_feature], dim=1)
+        previous_features = [F.interpolate(feature, size=(h, w)) for feature in self.hook_features]
+        all_features = previous_features + [last_feature]
+        output = torch.cat(all_features, dim=1)
 
-        return last_feature
+        return output, self.hook_convs
 
 class EncoderR(nn.Module):
     def __init__(self):
         super(EncoderR, self).__init__()
         base_dim = 16
         ch_style = 3
-        self.hook_outputs = []
+        self.hook_features = []
+        self.hook_convs = []
 
         self.model = nn.Sequential(
             spectral_norm(nn.Conv2d(ch_style, base_dim * 1, 3, 1, 1)),
@@ -112,50 +126,38 @@ class EncoderR(nn.Module):
             nn.BatchNorm2d(base_dim * 4),
             nn.LeakyReLU(0.2, inplace=True),
             nn.AvgPool2d(2),
+            spectral_norm(nn.Conv2d(base_dim * 4, base_dim * 4, 3, 1, 1)),
+            nn.BatchNorm2d(base_dim * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.AvgPool2d(2),
         )
 
         # add hook
-        for idx in [3, 7]:
-            self.model[idx].register_forward_hook(self.hook)
+        for idx in [3, 7, 11]:
+            self.model[idx].register_forward_hook(self.hook_f)
 
-    def hook(self, model, input, output):
-        self.hook_outputs += [output]
+        for idx in [0, 4, 8, 12]:
+            self.model[idx].register_forward_hook(self.hook_c)
+
+    def hook_f(self, model, input, output):
+        self.hook_features += [output]
+
+    def hook_c(self, model, input, output):
+        self.hook_convs += [output]
 
     def forward(self, image):
-        self.hook_outputs = []
+        self.hook_features = []
+        self.hook_convs = []
 
         last_feature = self.model(image)
         b, c, h, w = last_feature.size()
 
         # aggregate
-        previous_features = [F.interpolate(feature, size=(h, w)) for feature in self.hook_outputs]
-        last_feature = torch.cat(previous_features + [last_feature], dim=1)
+        previous_features = [F.interpolate(feature, size=(h, w)) for feature in self.hook_features]
+        all_features = previous_features + [last_feature]
+        output = torch.cat(all_features, dim=1)
 
-        return last_feature
-
-
-class DecoderS(nn.Module):
-    def __init__(self):
-        super(DecoderS, self).__init__()
-        base_dim = 16
-        self.model = nn.Sequential(
-            spectral_norm(nn.Conv2d(112, base_dim * 4, 3, 1, 1)),
-            ResidulBlock(base_dim * 4, base_dim * 4),
-            ResidulBlock(base_dim * 4, base_dim * 4),
-            ResidulBlock(base_dim * 4, base_dim * 4),
-            ResidulBlock(base_dim * 4, base_dim * 4),
-            ResidulBlock(base_dim * 4, base_dim * 2, sample='up'),
-            ResidulBlock(base_dim * 2, base_dim * 1, sample='up'),
-            ResidulBlock(base_dim * 1, base_dim * 1, sample='up'),
-            nn.BatchNorm2d(base_dim * 1),
-            nn.LeakyReLU(0.2, inplace=True),
-            spectral_norm(nn.Conv2d(base_dim * 1, 3, 3, 1, 1)),
-            nn.Tanh(),
-        )
-
-    def forward(self, h):
-        return self.model(h)
-
+        return output, self.hook_convs
 
 # generator2
 class ColorModel(nn.Module):
@@ -166,30 +168,30 @@ class ColorModel(nn.Module):
         self.encoderS = EncoderS()
         self.decoderS = DecoderS()
 
-        hid_dim = 112
+        hid_dim = 176
         self.tokeys = nn.Linear(hid_dim, hid_dim, bias=False)
         self.toqueries = nn.Linear(hid_dim, hid_dim, bias=False)
         self.tovalues = nn.Linear(hid_dim, hid_dim, bias=False)
 
     def forward(self, reference, sketch):
-        reference_features = self.encoderG(reference)
-        sketch_features = self.encoderS(sketch)
+        ref_features, ref_all_convs = self.encoderG(reference)
+        ske_features, ske_all_convs = self.encoderS(sketch)
 
         # do self attention
-        b, c, h, w = reference_features.size()
-        reference_features_ = reference_features.view(b, c, h * w).contiguous().permute(0, 2, 1)
-        sketch_features_ = sketch_features.view(b, c, h * w).contiguous().permute(0, 2, 1)
+        b, c, h, w = ref_features.size()
+        reference_features_ = ref_features.view(b, c, h * w).contiguous().permute(0, 2, 1)
+        sketch_features_ = ske_features.view(b, c, h * w).contiguous().permute(0, 2, 1)
 
-        sketch_features, keys, queries = self.attention(reference_features_, sketch_features_)
+        ske_features, keys, queries = self.attention(reference_features_, sketch_features_)
 
         #
-        sketch_features = sketch_features.permute(0, 2, 1).contiguous().view(b, c, h, w)
+        ske_features = ske_features.permute(0, 2, 1).contiguous().view(b, c, h, w)
 
         keys = keys.permute(0, 2, 1).contiguous().view(b, c, h, w)
         queries = queries.permute(0, 2, 1).contiguous().view(b, c, h, w)
 
         #
-        output = self.decoderS(sketch_features)
+        output = self.decoderS(ske_features, ske_all_convs)
 
         return output, queries , keys
 
@@ -210,63 +212,55 @@ class ColorModel(nn.Module):
 
         return out + sketch_features_, keys, queries
 
-# generator
-class Generator(nn.Module):
-    def __init__(self, ch_style, ch_content):
-        super(Generator, self).__init__()
-        ch_output = 3
-        base_dim = 64
-        self.style_encoder = nn.Sequential(
-            spectral_norm(nn.Conv2d(ch_style, base_dim * 1, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 1),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-            spectral_norm(nn.Conv2d(base_dim * 1, base_dim * 2, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 2),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-            spectral_norm(nn.Conv2d(base_dim * 2, base_dim * 4, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
+
+def up_conv(in_channels, out_channels):
+    return nn.Sequential(
+        spectral_norm(nn.Conv2d(in_channels, out_channels, 3, padding=1)),
+        nn.LeakyReLU(0.2, inplace=True),
+    )
+
+# discriminator
+class DecoderS(nn.Module):
+    def __init__(self):
+        super(DecoderS, self).__init__()
+        base_dim = 16
+
+        self.resblock_h = ResidulBlock(176, base_dim * 4)
+        self.dconv_up4  = up_conv(in_channels=base_dim * 8, out_channels=base_dim * 4)
+        self.dconv_up3  = up_conv(in_channels=base_dim * 8, out_channels=base_dim * 4)
+        self.dconv_up2  = up_conv(in_channels=base_dim * 6, out_channels=base_dim * 2)
+        self.dconv_up1  = up_conv(in_channels=base_dim * 3, out_channels=base_dim)
+        self.dconv_last = nn.Sequential(
+            spectral_norm(nn.Conv2d(base_dim, 3, 3, 1, 1)),
+            nn.Tanh()
         )
 
-        self.content_encoder = nn.Sequential(
-            spectral_norm(nn.Conv2d(ch_content, base_dim * 1, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 1),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-            spectral_norm(nn.Conv2d(base_dim * 1, base_dim * 2, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 2),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-            spectral_norm(nn.Conv2d(base_dim * 2, base_dim * 4, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-        )
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
-        self.decoder = nn.Sequential(
-            spectral_norm(nn.Conv2d(base_dim * 8, base_dim * 4, 3, 1, 1)),
-            ResidulBlock(base_dim * 4, base_dim * 4),
-            ResidulBlock(base_dim * 4, base_dim * 4),
-            ResidulBlock(base_dim * 4, base_dim * 4),
-            ResidulBlock(base_dim * 4, base_dim * 4),
-            ResidulBlock(base_dim * 4, base_dim * 2, sample='up'),
-            ResidulBlock(base_dim * 2, base_dim * 1, sample='up'),
-            ResidulBlock(base_dim * 1, base_dim * 1, sample='up'),
-            nn.BatchNorm2d(base_dim * 1),
-            nn.LeakyReLU(0.2, inplace=True),
-            spectral_norm(nn.Conv2d(base_dim * 1, ch_output, 3, 1, 1)),
-            nn.Tanh(),
-        )
+    def forward(self, h, sketch_all_convs):
+        conv1, conv2, conv3, conv4 = sketch_all_convs
+        # b,      2b,    4b,    4b
 
-    def forward(self, style, content):
-        style_h = self.style_encoder(style)
-        content_h = self.content_encoder(content)
-        h = torch.cat([style_h, content_h], dim=1)
-        return self.decoder(h)
+        x = self.resblock_h(h)
+        x = self.upsample(x)
+        x = torch.cat([x, conv4], dim = 1)
 
+        x = self.dconv_up4(x)
+        x = self.upsample(x)
+        x = torch.cat([x, conv3], dim=1)
+
+        x = self.dconv_up3(x)
+        x = self.upsample(x)
+        x = torch.cat([x, conv2], dim=1)
+
+        x = self.dconv_up2(x)
+        x = self.upsample(x)
+        x = torch.cat([x, conv1], dim=1)
+
+        x = self.dconv_up1(x)
+        out = self.dconv_last(x)
+
+        return out
 
 # discriminator
 class Discriminator(nn.Module):
@@ -287,3 +281,14 @@ class Discriminator(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
+if __name__ == '__main__':
+    from torchsummary import summary
+
+    model = ColorModel()
+
+    sketch = torch.randn((1,1,256,256))
+    ref_color = torch.rand((1,3,256,256))
+
+    output, _, _ = model(ref_color, sketch)
+    print (output.size())

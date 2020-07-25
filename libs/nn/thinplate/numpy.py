@@ -78,6 +78,15 @@ def tps_theta_from_points(c_src, c_dst, reduced=False):
 
     return np.stack((theta_dx, theta_dy), -1)
 
+def batch_tps_grid(batch_theta, batch_c_dst, dshape):
+    B = batch_theta.shape[0]
+
+    batch_grid = []
+    for b in range(B):
+        grid = tps_grid(batch_theta[b], batch_c_dst[b], dshape)
+        batch_grid += [grid]
+
+    return np.stack(batch_grid, axis=0)
 
 def tps_grid(theta, c_dst, dshape):    
     ugrid = uniform_grid(dshape)

@@ -46,7 +46,7 @@ class OneImageAnimeDataset(data.Dataset):
         color_image = read_im(im_path=color_fn)
         #if random.uniform(0, 1.) < 0.3: color_image = _random_noise_per_channel(color_image)
 
-        augment_color_image, G = self.TPS.augment(color_image)
+        augment_color_image, theta, c_dst = self.TPS.augment(color_image)
         sketch_image = read_im(im_path=sketch_fn)
 
         if self.transform is not None:
@@ -54,4 +54,4 @@ class OneImageAnimeDataset(data.Dataset):
             sketch_image = self.transform(sketch_image)
             color_image = self.transform(color_image)
 
-        return sketch_image[:1,:,:], color_image, augment_color_image, {'G': G}
+        return sketch_image[:1,:,:], color_image, augment_color_image, theta, c_dst

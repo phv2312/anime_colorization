@@ -5,6 +5,8 @@ import torch.nn as nn
 import copy
 import torch.nn.functional as F
 
+from libs.nn.thinplate import numpy as tps
+
 def _calc_dot_product(elem1, elem2):
     return torch.matmul(elem1, elem2.t())
 
@@ -21,7 +23,7 @@ class GridVisualize():
         self.r = self.org_w // self.feature_w
 
     def to_video(self, video_fn, list_images):
-        out = cv2.VideoWriter(video_fn, cv2.VideoWriter_fourcc(*'DIVX'), 15, (512, 256))
+        out = cv2.VideoWriter(video_fn, cv2.VideoWriter_fourcc(*'DIVX'), 15, (self.org_w * 2, self.org_h))
 
         for i in range(len(list_images)):
             out.write(list_images[i])
@@ -30,137 +32,107 @@ class GridVisualize():
 
     def visualize(self, color_image):
         from libs.nn.tps_model import TPS
-        from libs.utils.flow import imgshow
         import cv2
 
-        color_image = cv2.resize(color_image, dsize=(256, 256))
+        color_image = cv2.resize(color_image, dsize=(self.org_w, self.org_h))
 
-        augment_color_image, G = TPS().augment(color_image)
+        augment_color_image, theta, c_dist = TPS().augment(color_image)
 
-        G = G[np.newaxis, : ,: ,:]
+        theta = theta[np.newaxis, :, :] # dummy batch size
+        c_dist = c_dist[np.newaxis, :, :] # dummy batch size
         color_image = color_image[np.newaxis, :, :, :]
         augment_color_image = augment_color_image[np.newaxis, :, :, :]
 
-        grid_process = GridProcessing(G=G, r=self.r)
-
-        B = 1
-        F_H = self.feature_h
-        F_W = self.feature_w
+        grid_process = GridProcessing(theta, c_dist, (self.feature_h, self.feature_w))
+        positive_cords = grid_process.get_positive()
 
         list_image = []
+        for (ac_b, ac_iy, ac_ix), (po_b, po_iy, po_ix) in positive_cords.items():
+            _color_image = color_image[ac_b].copy()
+            _augment_color_image = augment_color_image[po_b].copy()
 
-        anchor_cords, positive_cords, negative_cords = grid_process._prepare()
-        for anchor_cord, positive_cord, negative_cord in zip(anchor_cords, positive_cords, negative_cords):
-            b = anchor_cord[0]
-
-            _color = color_image[b].copy()
-            _ref = augment_color_image[b].copy()
-
-            cv2.circle(_color, (int(anchor_cord[1] * self.r), int(anchor_cord[2] * self.r)), radius=8,
+            cv2.circle(_color_image, (int(ac_ix * self.r), int(ac_iy * self.r)), radius=8,
                        color=(0, 0, 255), thickness=3)
-            cv2.circle(_ref, (int(positive_cord[1] * self.r), int(positive_cord[2] * self.r)), radius=8,
+            cv2.circle(_augment_color_image, (int(po_ix * self.r), int(po_iy * self.r)), radius=8,
                        color=(0, 255, 0), thickness=3)
-            cv2.circle(_ref, (int(negative_cord[1] * self.r), int(negative_cord[2] * self.r)), radius=3,
-                       color=(255, 255, 0), thickness=2)
 
-            list_image += [np.concatenate([_ref, _color], axis=1)]
+            list_image += [np.concatenate([_augment_color_image, _color_image], axis=1)]
 
         return list_image
 
 class GridProcessing():
-    def __init__(self, G, r):
-        self.G = G #G.cpu().numpy()
-        self.r = r
-        self.min_threshold = 0.01
+    def __init__(self, theta=None, c_dst=[], f_shape=(32, 32)):
+        self.f_shape = f_shape
 
-        self.G_norm = self._decompose_G(self.G)
+        self.G = tps.batch_tps_grid(theta, c_dst, dshape=f_shape) # (b,h,w,2~xy)
+
+        self.G_new = self._decompose_G(self.G)
 
     def _decompose_G(self, G):
         B, H, W, _ = G.shape
 
-        G_xmin = np.floor(G[:, :, :, [0]] * W).astype(np.int32)
+        G *= np.array([W, H]).reshape((1, 1, 1, 2))
+
+        G_xmin = np.floor(G[:, :, :, [0]]).astype(np.int32)
         G_xmax = G_xmin + 1
-        G_ymin = np.floor(G[:, :, :, [1]] * H).astype(np.int32)
+        G_ymin = np.floor(G[:, :, :, [1]]).astype(np.int32)
         G_ymax = G_ymin + 1
 
-        G_norm = np.concatenate([G_xmin, G_ymin, G_xmax, G_ymax], axis=-1)
-        return G_norm
+        """
+        1 +++ 2
+        +++++++
+        4 +++ 3
+        """
 
-    def _prepare(self):
-        B, H, W, _ = self.G.shape
-        F_H = H // self.r
-        F_W = W // self.r
+        G1 = np.concatenate([G_xmin, G_ymin], axis=-1)
+        G2 = np.concatenate([G_xmax, G_ymin], axis=-1)
+        G3 = np.concatenate([G_xmax, G_ymax], axis=-1)
+        G4 = np.concatenate([G_xmin, G_ymax], axis=-1)
 
-        final_anchor_cords, final_positive_cords, final_negative_cords = [], [], []
+        G1_dist = np.linalg.norm(G - G1, ord=2, axis=-1)
+        G2_dist = np.linalg.norm(G - G2, ord=2, axis=-1)
+        G3_dist = np.linalg.norm(G - G3, ord=2, axis=-1)
+        G4_dist = np.linalg.norm(G - G4, ord=2, axis=-1)
 
-        for b in range(0, B):
-            for h in range(0, F_H):
-                for w in range(0, F_W):
-                    #
-                    anchor_cords = self._get_positive_ids(b, h, w)
-                    if len(anchor_cords) < 1:
-                        continue
+        G1 = np.concatenate([G1, G1_dist[:,:,:,np.newaxis]], axis=-1)
+        G2 = np.concatenate([G2, G2_dist[:,:,:,np.newaxis]], axis=-1)
+        G3 = np.concatenate([G3, G3_dist[:,:,:,np.newaxis]], axis=-1)
+        G4 = np.concatenate([G4, G4_dist[:,:,:,np.newaxis]], axis=-1)
 
-                    positive_cords = [(w, h)] * len(anchor_cords)
-                    negative_cords = self._get_negative_ids(positive_cords)
+        G_new = np.stack([G1, G2, G3, G4], axis=3)
+        return G_new
 
-                    #
-                    for anchor_cord, positive_cord, negative_cord in zip(anchor_cords, positive_cords, negative_cords):
-                        final_anchor_cords += [[b] + anchor_cord.tolist()]
-                        final_positive_cords += [[b] + list(positive_cord)]
-                        final_negative_cords += [[b] + list(negative_cord)]
+    def get_positive(self):
+        B, H, W, _, _ = self.G_new.shape
 
-        return final_anchor_cords, final_positive_cords, final_negative_cords
+        positive_pair = {} # key from sketch-anchor, value from reference
+        for b in range(B):
+            _G_new = self.G_new[b] # (H, W, 4, 3)
 
-    def _get_negative_ids(self, positive_cords):
-        B, H, W, _ = self.G.shape
+            # get_positive
+            for h in range(H):
+                for w in range(W):
 
-        negative_cords = []
-        for positive_cord in positive_cords:
-            # generate negatives
-            iys = random.choices(list(range(0, H // self.r)), k=10)
-            ixs = random.choices(list(range(0, W // self.r)), k=10)
+                    p1, p2, p3, p4 = _G_new[h, w, :, :2]
+                    p1_dist, p2_dist, p3_dist, p4_dist = _G_new[h, w, : ,-1]
 
-            #
-            tmp_negative_cords = []
-            for ix, iy in zip(ixs, iys):
-                if (ix, iy) in [positive_cord]: continue
-                tmp_negative_cords += [(ix, iy)]
+                    ps = []
+                    dists = []
+                    for p_id, (p, dist) in enumerate(zip([p1, p2, p3, p4], [p1_dist, p2_dist, p3_dist, p4_dist])):
+                        if p[0] < 0 or p[1] < 0: continue #lower bound
+                        if p[0] > W - 1 or p[1] > H - 1: continue #upper bound
+                        ps += [p]; dists += [dist]
 
-            #
-            negative_cord = list(sorted(tmp_negative_cords,
-                               key=lambda elem: (elem[1] - positive_cord[1]) ** 2 + (elem[0] - positive_cord[0]) ** 2))[-1]
+                    if len(ps) > 0:
 
-            #
-            negative_cords += [negative_cord]
+                        dists = np.array(dists)
+                        probs = np.max(dists) + 0.3 - dists
+                        probs = probs / np.sum(probs)
 
-        return negative_cords
+                        p_pos_id = np.random.choice(np.arange(len(ps)), p=probs)
+                        positive_pair[(b, int(ps[p_pos_id][1]), int(ps[p_pos_id][0]))] = (b, int(h), int(w))
 
-
-    def _get_positive_ids(self, b, iy, ix):
-        # iy, ix from feature map
-        B, H, W, _ = self.G.shape
-
-        #
-        src_iy_mid = int((iy + 0.5) * self.r)
-        src_ix_mid = int((ix + 0.5) * self.r)
-
-        #
-        src_G_norm = self.G_norm[b, src_iy_mid, src_ix_mid]
-        src_x_min, src_y_min, src_x_max, src_y_max = src_G_norm
-
-        if src_x_min < 0 or src_y_min < 0 or src_x_max > W or src_y_max > H:
-            return []
-
-        ix_range = [src_x_min // self.r , src_x_max // self.r + 1]
-        iy_range = [src_y_min // self.r, src_y_max // self.r + 1]
-
-        positive_cords = np.array([[(x, y) for y in range(iy_range[0], iy_range[1]) if 0 <= y <= H // self.r]
-                                   for x in range(ix_range[0], ix_range[1]) if 0 <= x <= W // self.r])
-        positive_cords = positive_cords.reshape((-1, 2)).clip(0, 31)
-
-        return positive_cords
-
+        return positive_pair
 
 class TripletLoss(nn.Module):
     def __init__(self, margin=1.0):
@@ -168,80 +140,80 @@ class TripletLoss(nn.Module):
         self.margin = margin
 
     def calc_cosine(self, x1, x2):
-        return torch.sum(F.cosine_similarity(x1, x2))
+        return 1 - F.cosine_similarity(x1, x2)
 
-    def calc_euclidean(self, x1, x2):
-        return (x1 - x2).pow(2).sum(1)
-
-    def calc_dotproduct(self, x1, x2):
-        return torch.sum(torch.matmul(x1, x2.t()))
-
-    def forward(self, anchor: torch.Tensor, positive: torch.Tensor, negative: torch.Tensor) -> torch.Tensor:
-        distance_positive = 1 - self.calc_cosine(anchor, positive) #self.calc_euclidean(anchor, positive)
-        distance_negative = 1 - self.calc_cosine(anchor, negative) #self.calc_euclidean(anchor, negative)
+    def forward(self, anchor, positive, negative, print_value=False) -> torch.Tensor:
+        distance_positive = self.calc_cosine(anchor, positive)
+        distance_negative = self.calc_cosine(anchor, negative)
         losses = torch.relu(distance_positive - distance_negative + self.margin)
 
-        return losses.mean()
+        if print_value:
+            print ('pos:', distance_positive)
+            print ('neg:', distance_negative)
 
-def get_negative_ids(anchor_f, ref_fs):
-    """
-    :param anchor_f: (1, n_dim)
-    :param ref_fs: (hw, n_dim)
-    :return:
-    """
-    c, h, w = ref_fs.size()
-    ref_fs = ref_fs.view(c, h * w).contiguous().permute(1, 0) # (hw, n_dim)
-
-    dist = F.cosine_similarity(anchor_f, ref_fs)
-
-    min_id = torch.argsort(dist).cpu().numpy()[:3]
-    return -1, min_id % w, min_id // w
+        return losses
 
 class SimilarityTripletLoss(nn.Module):
-    def __init__(self, receptive_field=8, n_positive=2, k=2):
+    def __init__(self):
         super(SimilarityTripletLoss, self).__init__()
-        self.receptive_field = receptive_field
 
-        self.loss = TripletLoss(margin=0.6)
+        self.loss = TripletLoss(margin=4.1)
 
-    def forward(self, sketch_query_vectors, ref_key_vectors, G):
+    def forward(self, sketch_query_vectors, ref_key_vectors, theta, c_dst):
         """
         :param sketch_query_vectors: of size (b, hw, n_dim)
         :param ref_key_vectors: of size (b, hw, n_dim)
-        :param G: (b, h, w, 2)
+        :param ...
         :return:
         """
-        grid_process= GridProcessing(G.cpu().numpy(), r = 8)
-        B, H, W, _ = G.size()
         B, C, F_H, F_W = sketch_query_vectors.size()
-
-        assert H == F_H * self.receptive_field and W == F_W * self.receptive_field
+        grid_process = GridProcessing(theta.cpu().numpy(), c_dst.cpu().numpy(), (F_H, F_W))
 
         i = 0
         triplet_loss = 0
-        anchor_cords, positive_cords, negative_cords = grid_process._prepare()
+        positive_cords = grid_process.get_positive()
 
-        for anchor_cord, positive_cord, negative_cord in zip(anchor_cords, positive_cords, negative_cords):
-            b = anchor_cord[0]
+        for (ac_b, ac_iy, ac_ix), (po_b, po_iy, po_ix) in positive_cords.items():
+            sketch_ac_f = sketch_query_vectors[ac_b, :, [ac_iy], [ac_ix]]
+            ref_po_f = ref_key_vectors[po_b, :, [po_iy], [po_ix]]
 
-            anchor = sketch_query_vectors[b, :, [anchor_cord[2]], [anchor_cord[1]]]
-            positive = ref_key_vectors[b, :, [positive_cord[2]], [positive_cord[1]]]
+            # get_negative
+            ng_iys, ng_ixs = [], []
+            with torch.no_grad():
+                samples = ref_key_vectors[po_b, :, :, :].view(C, F_H * F_W).contiguous().T
+                negative_losses = self.loss(anchor=sketch_ac_f.T, positive=ref_po_f.T, negative=samples)
 
-            negative_cord = get_negative_ids(anchor.T, ref_key_vectors[b])
-            negative = ref_key_vectors[b, :, negative_cord[2], negative_cord[1]]
+                min_ids = torch.argsort(negative_losses).cpu().numpy()[:100]
+                for min_id in min_ids:
+                    ng_ix = min_id % F_W
+                    ng_iy = min_id // F_W
 
-            _loss = self.loss(anchor=anchor.T.contiguous(), positive=positive.T.contiguous(), negative=negative.T.contiguous())
+                    if (ng_iy, ng_ix) in [(po_iy, po_ix)]:
+                        continue
+
+                    neg_raw_ix, neg_raw_iy = grid_process.G[po_b, ng_iy, ng_ix] * np.array([F_W, F_H])
+                    pos_raw_ix, pos_raw_iy = grid_process.G[po_b, po_iy, po_ix] * np.array([F_W, F_H])
+                    if abs(neg_raw_iy - pos_raw_iy) < 1.2 and abs(neg_raw_ix - pos_raw_ix) < 1.2:
+                        continue
+
+                    ng_iys += [ng_iy]
+                    ng_ixs += [ng_ix]
+
+            # calculate loss
+            ref_ng_f = ref_key_vectors[po_b, :, ng_iys, ng_ixs]
+            _loss = self.loss(anchor=sketch_ac_f.T, positive=ref_po_f.T, negative=ref_ng_f.T, print_value=False).mean()
             triplet_loss += _loss
 
             i += 1
 
         return triplet_loss / (1e-6 + i)
 
+
 if __name__ == '__main__':
     import cv2
 
     im_fn = "/home/kan/Desktop/Cinnamon/gan/Adversarial-Colorization-Of-Icons-Based-On-Structure-And-Color-Conditions/geek/full_data/hor01_sample/color/hor01_018_021_k_A_A0002.png"
-    visualize = GridVisualize(org_size=(256,256), feature_size=(32,32))
+    visualize = GridVisualize(org_size=(256,256), feature_size=(16, 16))
     list_image = visualize.visualize(color_image=cv2.imread(im_fn))
     visualize.to_video("./output.avi", list_image)
 
