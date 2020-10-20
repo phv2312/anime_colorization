@@ -16,7 +16,6 @@ def warp_image_cv(img, c_src, c_dst, dshape=None):
     theta = tps.tps_theta_from_points(c_src, c_dst, reduced=True)
 
     grid = tps.tps_grid(theta, c_dst, dshape)
-    #print (grid.shape)
     mapx, mapy = tps.tps_grid_to_remap(grid, img.shape)
     return cv2.remap(img, mapx, mapy, cv2.INTER_CUBIC), theta
 
@@ -57,9 +56,6 @@ def random_cord():
 
     return np.array(c_src), np.array(c_dst)
 
-theta = None
-c_dst_ = None
-
 class TPS:
     def augment(self, input_image):
         """
@@ -67,9 +63,8 @@ class TPS:
         :param input_image: output image will have the same size as input image
         :return:
         """
-        is_pil = False
-        if type(input_image) == Image.Image:
-            is_pil = True
+        is_pil = True if type(input_image) == Image.Image else False
+        if is_pil:
             input_image = np.array(input_image)
 
         c_src, c_dst = random_cord()
@@ -80,80 +75,12 @@ class TPS:
 
         return warp_image, theta, c_dst
 
-    def test_invert_transform(self, input_image):
-        warp_image, G, c_dst = self.augment(input_image)
-        imgshow(warp_image)
-
-        # revert back to input from warp
-        G = G.T
-
-        mapx, mapy = tps.tps_grid_to_remap(G, warp_image.shape)
-        ahihi = cv2.remap(warp_image, mapx, mapy, cv2.INTER_CUBIC)
-
-        imgshow(ahihi)
-
-    def visualize(self, input_image):
-        warp_image, G = self.augment(input_image)
-
-        h, w = warp_image.shape[:2]
-        imgshow(input_image)
-        imgshow(warp_image)
-
-        # check if resize is still true
-        input_image_resize = cv2.resize(input_image, dsize=(32, 32))
-        G = tps.tps_grid(theta_, c_dst_, (32, 32))
-        print (theta_)
-        mapx, mapy = tps.tps_grid_to_remap(G, (32, 32))
-        output_warp_image  = cv2.remap(input_image_resize, mapx, mapy, cv2.INTER_CUBIC)
-
-        imgshow(input_image_resize)
-        imgshow(output_warp_image)
-
-        for ih in range(60, h, 20):
-            for iw in range(0, w, 20):
-                _input_image = input_image.copy()
-                _warp_image  = warp_image.copy()
-
-                ix, iy = G[ih, iw]
-                print (ix, iy)
-
-                if ix < 0.01 or iy <= 0.01:
-                    print('continue')
-                    continue
-
-                ix = np.clip(ix, 0., 1.)
-                iy = np.clip(iy, 0., 1.)
-
-                ix *= w #((ix + 1) / 2) * (w - 1)
-                iy *= h
-
-                # bot-left
-                ix_nw = int(floor(ix))
-                iy_nw = int(floor(iy))
-
-                # top-right
-                ix_se = ix_nw + 1
-                iy_se = iy_nw + 1
-
-                # conduct positive ids
-                positive_ids = []
-                for _x in range(ix_nw, ix_se + 1):
-                    for _y in range(iy_nw, iy_se + 1):
-
-                        if 0 <= _x <= w and 0 <= _y <= h:
-                            positive_ids += [(_x, _y)]
-
-                # visualize
-                cv2.circle(_warp_image, (iw, ih), radius=3, color=(255,255,0), thickness=3)
-                print (positive_ids)
-                for _x, _y in positive_ids:
-                    cv2.circle(_input_image, (_x, _y), radius=2, color=(255,0,255), thickness=3)
-
-                imgshow(np.concatenate([_input_image, _warp_image], axis=1))
-
 if __name__ == '__main__':
-    input_image= cv2.imread("/home/kan/Desktop/Cinnamon/gan/self_augment_color/sample_dataset/1/color/A0001.png")
+    input_image= cv2.imread("/home/kan/Desktop/visualize_282001.png")
     input_image = cv2.resize(input_image, dsize=(256,256))
-    TPS().visualize(input_image)
+
+    tps_model = TPS()
+    warped_image, _, _ = tps_model.augment(input_image)
+    imgshow(warped_image)
 
 

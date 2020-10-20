@@ -115,9 +115,10 @@ class GridProcessing():
 
                     p1, p2, p3, p4 = _G_new[h, w, :, :2]
                     p1_dist, p2_dist, p3_dist, p4_dist = _G_new[h, w, : ,-1]
-
                     ps = []
                     dists = []
+
+                    # filter
                     for p_id, (p, dist) in enumerate(zip([p1, p2, p3, p4], [p1_dist, p2_dist, p3_dist, p4_dist])):
                         if p[0] < 0 or p[1] < 0: continue #lower bound
                         if p[0] > W - 1 or p[1] > H - 1: continue #upper bound
@@ -126,10 +127,10 @@ class GridProcessing():
                     if len(ps) > 0:
 
                         dists = np.array(dists)
-                        probs = np.max(dists) + 0.3 - dists
+                        probs = np.max(dists) - dists + 0.3
                         probs = probs / np.sum(probs)
 
-                        p_pos_id = np.random.choice(np.arange(len(ps)), p=probs)
+                        p_pos_id = int(np.argmax(probs)) #np.random.choice(np.arange(len(ps)), p=probs)
                         positive_pair[(b, int(ps[p_pos_id][1]), int(ps[p_pos_id][0]))] = (b, int(h), int(w))
 
         return positive_pair
@@ -153,11 +154,22 @@ class TripletLoss(nn.Module):
 
         return losses
 
+def calculate_cosine_distance(sketch_f, ref_fs):
+    """
+    sketch_f: of shape (D, 1),
+    ref_fs: of shape (D, F_H F_W)
+    """
+    D, F_H, F_W = ref_fs.shape
+    ref_fs_flat = ref_fs.view(D, F_H * F_W)
+
+    sim = F.cosine_similarity(sketch_f.T, ref_fs_flat.T)
+    dis = torch.ones_like(sim) - sim
+
+    return dis.view(F_H, F_W)
+
 class SimilarityTripletLoss(nn.Module):
     def __init__(self):
         super(SimilarityTripletLoss, self).__init__()
-
-        self.loss = TripletLoss(margin=4.1)
 
     def forward(self, sketch_query_vectors, ref_key_vectors, theta, c_dst):
         """
@@ -173,40 +185,31 @@ class SimilarityTripletLoss(nn.Module):
         triplet_loss = 0
         positive_cords = grid_process.get_positive()
 
+        pos_distances, neg_distances = [], []
         for (ac_b, ac_iy, ac_ix), (po_b, po_iy, po_ix) in positive_cords.items():
             sketch_ac_f = sketch_query_vectors[ac_b, :, [ac_iy], [ac_ix]]
             ref_po_f = ref_key_vectors[po_b, :, [po_iy], [po_ix]]
 
-            # get_negative
-            ng_iys, ng_ixs = [], []
-            with torch.no_grad():
-                samples = ref_key_vectors[po_b, :, :, :].view(C, F_H * F_W).contiguous().T
-                negative_losses = self.loss(anchor=sketch_ac_f.T, positive=ref_po_f.T, negative=samples)
+            # get negative
+            distance = calculate_cosine_distance(sketch_ac_f, ref_key_vectors[po_b])
+            ignore_pos = torch.zeros_like(distance)
+            ignore_pos[po_iy, po_ix] = 2. # ignore positive
 
-                min_ids = torch.argsort(negative_losses).cpu().numpy()[:100]
-                for min_id in min_ids:
-                    ng_ix = min_id % F_W
-                    ng_iy = min_id // F_W
+            min_distances = torch.topk(distance.flatten() + ignore_pos.flatten(), k=4, largest=False, dim=-1)[0]
+            pos_distance  = distance[po_iy, po_ix]
 
-                    if (ng_iy, ng_ix) in [(po_iy, po_ix)]:
-                        continue
+            neg_distances.append(min_distances)
+            pos_distances.append(pos_distance)
 
-                    neg_raw_ix, neg_raw_iy = grid_process.G[po_b, ng_iy, ng_ix] * np.array([F_W, F_H])
-                    pos_raw_ix, pos_raw_iy = grid_process.G[po_b, po_iy, po_ix] * np.array([F_W, F_H])
-                    if abs(neg_raw_iy - pos_raw_iy) < 1.2 and abs(neg_raw_ix - pos_raw_ix) < 1.2:
-                        continue
+        pos_distance = torch.mean(torch.stack(pos_distances, dim=-1))
+        loss = pos_distance
 
-                    ng_iys += [ng_iy]
-                    ng_ixs += [ng_ix]
-
-            # calculate loss
-            ref_ng_f = ref_key_vectors[po_b, :, ng_iys, ng_ixs]
-            _loss = self.loss(anchor=sketch_ac_f.T, positive=ref_po_f.T, negative=ref_ng_f.T, print_value=False).mean()
-            triplet_loss += _loss
-
-            i += 1
-
-        return triplet_loss / (1e-6 + i)
+        if len(neg_distances) > 0:
+            neg_distances = torch.cat(neg_distances, dim=-1)
+            neg_loss = torch.clamp(torch.full_like(neg_distances, 0.6) - neg_distances, min=0.0)
+            neg_loss = torch.mean(neg_loss)
+            loss = loss + neg_loss
+        return loss
 
 
 if __name__ == '__main__':

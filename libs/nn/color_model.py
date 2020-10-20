@@ -193,7 +193,7 @@ class ColorModel(nn.Module):
         #
         output = self.decoderS(ske_features, ske_all_convs)
 
-        return output, queries , keys
+        return output, queries, keys
 
     def attention(self, reference_features_, sketch_features_):
         d = reference_features_.size()[-1]

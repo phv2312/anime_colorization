@@ -21,15 +21,16 @@ def ensure_loss(loss):
 @click.option('--cfg', default='./exps/_simple.yaml', help='Path to Config Path')
 def main(cfg):
     cfg = yaml.load(open(cfg, 'r'))
+    train_cfg = cfg['TRAIN']
+    model_cfg = cfg['MODELS']
 
     # writer
     writer= SummaryWriter(log_dir='color')
     vis_dir, weight_dir = 'samples', 'weights'
 
     # dataset
-    _cfg = cfg['TRAIN']
-    train_dataset = AnimeDataset(input_dir=_cfg['INPUT_DIR'], is_train=True, transform=create_train_transform(cfg))
-    train_loader  = data.DataLoader(train_dataset, batch_size=_cfg['BATCH_SIZE'], shuffle=True, num_workers=_cfg['N_WORK'])
+    train_dataset = AnimeDataset(input_dir=train_cfg['INPUT_DIR'], is_train=True, transform=create_train_transform(cfg))
+    train_loader  = data.DataLoader(train_dataset, batch_size=train_cfg['BATCH_SIZE'], shuffle=True, num_workers=train_cfg['N_WORK'])
 
     # model
     color_model = ColorModel()
@@ -39,8 +40,8 @@ def main(cfg):
     disc_model.cuda()
 
     # loss
-    _cfg = cfg['LOSSES']
-    l1_style_content_loss = L1StyleContentLoss(content_layers=_cfg['CONTENT']['LAYER'], style_layers=_cfg['STYLE']['LAYER']).cuda()
+    train_cfg = cfg['LOSSES']
+    l1_style_content_loss = L1StyleContentLoss().cuda()
     sim_triplet_loss = SimilarityTripletLoss().cuda()
     loss_weights = {}
 
@@ -57,8 +58,12 @@ def main(cfg):
     for epoch_id in range(cfg['TRAIN']['EPOCH']):
         print ('>> Epoch:', epoch_id + 1)
 
-        train(train_loader, (color_model, disc_model), (l1_style_content_loss, sim_triplet_loss),
-              loss_weights, (color_optim, disc_optim), vis_dir, weight_dir, writer)
+        train(train_loader,
+              (color_model, disc_model), #models
+              (l1_style_content_loss, sim_triplet_loss), #losses
+              loss_weights, #loss_weights
+              (color_optim, disc_optim), #optimizer
+              vis_dir, weight_dir, writer, cfg)  # other stuffs
 
         color_scheduler.step(epoch_id + 1)
         disc_scheduler.step(epoch_id + 1)
@@ -66,7 +71,7 @@ def main(cfg):
     writer.close()
 
 global_iter = 0
-def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir, writer):
+def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir, writer, cfg):
     global global_iter
 
     # models
@@ -77,14 +82,15 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
     # optimizer
     color_optimzier, disc_optimizer = optimizers
 
-    # losses
+    # losses & weights
     l1_style_content_loss, sim_triplet_loss = losses
+    loss_weight_cfg = cfg['LOSSES']['WEIGHTS']
     lws = {
-        'triplet': 1.,
-        'l1': 50.,
-        'gan_gen': 1.,
-        'style': 30.,
-        'content': 0.01
+        'triplet': loss_weight_cfg['TRIPLET'],
+        'l1': loss_weight_cfg['L1'],
+        'gan_gen': loss_weight_cfg['GAN_G'],
+        'style': loss_weight_cfg['STYLE'],
+        'content': loss_weight_cfg['CONTENT']
     }
 
     for batch_id, batch_info in enumerate(loader):

@@ -1,23 +1,17 @@
 MODEL_NAME: COLORIZATION_CVPR2020
 LOSSES:
-  STYLE:
-    LAYER: ['conv_1', 'conv_2', 'conv_3', 'conv_4', 'conv_5']
-    WEIGHT: 1
-  CONTENT:
-    LAYER: ['conv_4']
-    WEIGHT: 1
-  L1:
-    WEIGHT: 1
   TRIPLET:
     N_POSITIVE: 2
     K: 2 # n_negative / n_positive
     MARGIN: 0.5
     WEIGHT: 1
-  GAN:
-    DISC:
-      WEIGHT: 1.
-    GEN:
-      WEIGHT: 1
+  WEIGHTS:
+    L1: 50
+    STYLE: 1
+    CONTENT: 1
+    GAN_G: 1
+    TRIPLET: 1
+
 MODELS:
   INPUT_HEIGHT: 256
   INPUT_WEIGHT: 256
@@ -27,10 +21,10 @@ MODELS:
     CH_INPUT: 6
 
 TRAIN:
-  INPUT_DIR: "/home/kan/Desktop/Cinnamon/gan/Adversarial-Colorization-Of-Icons-Based-On-Structure-And-Color-Conditions/geek/full_data/hor01_sample"
+  INPUT_DIR: "./simple_data/hor01_sample"
   EPOCH: 10000
-  BATCH_SIZE: 4
+  BATCH_SIZE: 1
   G_LR: 0.0001 #0.0000495
   D_LR: 0.0002 #0.0000990
-  N_WORK: 3
+  N_WORK: 0
 
