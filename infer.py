@@ -136,8 +136,8 @@ def main(cfg, weight_path, sketch_path, reference_path):
     to_video("./debug_vis_attn.avi", list_image)
 
 if __name__ == '__main__':
-    sketch_path = "/home/kan/Desktop/Cinnamon/gan/Adversarial-Colorization-Of-Icons-Based-On-Structure-And-Color-Conditions/geek/full_data/hor01_sample_1/sketch/hor01_018_021_k_A_A0001.png"
-    refer_path = "/home/kan/Desktop/Cinnamon/gan/Adversarial-Colorization-Of-Icons-Based-On-Structure-And-Color-Conditions/geek/full_data/hor01_sample_1/color/hor01_018_021_k_A_A0001.png"
-    weight_path = "/home/kan/Desktop/Cinnamon/gan/self_augment_color/weights/00000520.G.pth"
+    sketch_path = "/home/kan/Desktop/cinnamon/anime_colorization/simple_data/hor01_sample/sketch/hor01_018_021_k_A_A0002.png"
+    refer_path = "/home/kan/Desktop/cinnamon/anime_colorization/simple_data/hor01_sample/color/hor01_018_021_k_A_A0001.png"
+    weight_path = "/home/kan/Desktop/cinnamon/anime_colorization/weights/00000630.G.pth"
 
     main(None, weight_path, sketch_path, refer_path)

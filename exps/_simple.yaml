@@ -24,7 +24,7 @@ TRAIN:
   INPUT_DIR: "./simple_data/hor01_sample"
   EPOCH: 10000
   BATCH_SIZE: 1
-  G_LR: 0.0001 #0.0000495
+  G_LR: 0.00001 #0.0000495
   D_LR: 0.0002 #0.0000990
-  N_WORK: 0
+  N_WORK: 4
 

@@ -1,9 +1,10 @@
 import os
 import glob
+import numpy as np
 import PIL.Image as Image
 
 def read_im(im_path, pil_mode='RGB'):
-    return Image.open(im_path).convert(pil_mode)
+    return np.array(Image.open(im_path).convert(pil_mode))
 
 def load_file_from_dir(dir, exts=['.jpg', '.png']):
     fns = []

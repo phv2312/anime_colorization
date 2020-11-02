@@ -1,235 +1,166 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.nn.utils.spectral_norm as spectral_norm
+from libs.nn.utils import *
 
-
-class Interpolate2D(nn.Module):
-    def __init__(self, scale_factor, mode='nearest'):
-        super(Interpolate2D, self).__init__()
-        self.sf = scale_factor
-        self.mode = mode
-
-    def forward(self, x):
-        return F.interpolate(x, scale_factor=self.sf, mode=self.mode)
-
-
-class Flatten(nn.Module):
-    def forward(self, input):
-        return input.view(input.size(0), -1)
-
-
-class ResidulBlock(nn.Module):
-    def __init__(self, inc, outc, sample='none'):
-        super(ResidulBlock, self).__init__()
-        self.conv1 = spectral_norm(nn.Conv2d(inc, outc, 3, 1, 1))
-        self.conv2 = spectral_norm(nn.Conv2d(outc, outc, 3, 1, 1))
-        self.conv_sc = spectral_norm(nn.Conv2d(inc, outc, 1, 1, 0)) if inc != outc else False
-
-        if sample == 'up':
-            self.sample = Interpolate2D(scale_factor=2)
-        else:
-            self.sample = None
-
-        self.bn1 = nn.BatchNorm2d(inc)
-        self.bn2 = nn.BatchNorm2d(outc)
-
-        self.act = nn.LeakyReLU(0.2)
-
-    def forward(self, x):
-        h = self.act(self.bn1(x))
-
-        if self.sample:
-            h = self.sample(h)
-            x = self.sample(x)
-
-        h = self.conv1(h)
-        h = self.act(self.bn2(h))
-        h = self.conv2(h)
-
-        if self.conv_sc:
-            x = self.conv_sc(x)
-        return x + h
-
-class EncoderS(nn.Module):
-    def __init__(self):
-        super(EncoderS, self).__init__()
-        base_dim = 16
-        ch_style = 1
-        self.hook_features = []
-        self.hook_convs = []
-
-        self.model = nn.Sequential(
-            spectral_norm(nn.Conv2d(ch_style, base_dim * 1, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 1),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-            spectral_norm(nn.Conv2d(base_dim * 1, base_dim * 2, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 2),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-            spectral_norm(nn.Conv2d(base_dim * 2, base_dim * 4, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-            spectral_norm(nn.Conv2d(base_dim * 4, base_dim * 4, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-        )
-
-        # add hook
-        for idx in [3, 7, 11]:
-            self.model[idx].register_forward_hook(self.hook_f)
-
-        for idx in [0, 4, 8, 12]:
-            self.model[idx].register_forward_hook(self.hook_c)
-
-    def hook_f(self, model, input, output):
-        self.hook_features += [output]
-
-    def hook_c(self, model, input, output):
-        self.hook_convs += [output]
-
-    def forward(self, image):
-        self.hook_features = []
-        self.hook_convs = []
-
-        last_feature = self.model(image)
-        b, c, h, w = last_feature.size()
-
-        # aggregate
-        previous_features = [F.interpolate(feature, size=(h, w)) for feature in self.hook_features]
-        all_features = previous_features + [last_feature]
-        output = torch.cat(all_features, dim=1)
-
-        return output, self.hook_convs
-
-class EncoderR(nn.Module):
-    def __init__(self):
-        super(EncoderR, self).__init__()
-        base_dim = 16
-        ch_style = 3
-        self.hook_features = []
-        self.hook_convs = []
-
-        self.model = nn.Sequential(
-            spectral_norm(nn.Conv2d(ch_style, base_dim * 1, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 1),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-            spectral_norm(nn.Conv2d(base_dim * 1, base_dim * 2, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 2),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-            spectral_norm(nn.Conv2d(base_dim * 2, base_dim * 4, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-            spectral_norm(nn.Conv2d(base_dim * 4, base_dim * 4, 3, 1, 1)),
-            nn.BatchNorm2d(base_dim * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.AvgPool2d(2),
-        )
-
-        # add hook
-        for idx in [3, 7, 11]:
-            self.model[idx].register_forward_hook(self.hook_f)
-
-        for idx in [0, 4, 8, 12]:
-            self.model[idx].register_forward_hook(self.hook_c)
-
-    def hook_f(self, model, input, output):
-        self.hook_features += [output]
-
-    def hook_c(self, model, input, output):
-        self.hook_convs += [output]
-
-    def forward(self, image):
-        self.hook_features = []
-        self.hook_convs = []
-
-        last_feature = self.model(image)
-        b, c, h, w = last_feature.size()
-
-        # aggregate
-        previous_features = [F.interpolate(feature, size=(h, w)) for feature in self.hook_features]
-        all_features = previous_features + [last_feature]
-        output = torch.cat(all_features, dim=1)
-
-        return output, self.hook_convs
+def init_net_weight(module):
+    if (isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear) or isinstance(module, nn.Embedding)):
+        nn.init.normal_(module.weight, 0, 0.02)
+    elif isinstance(module, nn.BatchNorm2d):
+        nn.init.normal_(module.weight.data, 1.0, 0.02)
+        nn.init.constant_(module.bias.data, 0)
 
 # generator2
 class ColorModel(nn.Module):
-    def __init__(self):
+    def __init__(self, do_init_weight=False):
         super(ColorModel, self).__init__()
+        # encoder
+        self.feature_extraction = FeatureExtraction()
+        self.adapt_layer_sketch3 = adap_layer_feat(1024)
+        self.adapt_layer_sketch2 = adap_layer_feat(512)
+        self.adapt_layer_sketch1 = adap_layer_feat(256)
 
-        self.encoderG = EncoderR()
-        self.encoderS = EncoderS()
-        self.decoderS = DecoderS()
+        self.adapt_layer_reference3 = adap_layer_feat(1024)
+        self.adapt_layer_reference2 = adap_layer_feat(512)
+        self.adapt_layer_reference1 = adap_layer_feat(256)
 
-        hid_dim = 176
-        self.tokeys = nn.Linear(hid_dim, hid_dim, bias=False)
-        self.toqueries = nn.Linear(hid_dim, hid_dim, bias=False)
-        self.tovalues = nn.Linear(hid_dim, hid_dim, bias=False)
+        # matching layer
+        self.matching_layer = matching_layer()
+        self.feature_H, self.feature_W, self.beta, self.kernel_sigma = 16, 16, 50, 5
+        self.find_correspondence = find_correspondence(self.feature_H, self.feature_W, self.beta, self.kernel_sigma)
 
-    def forward(self, reference, sketch):
-        ref_features, ref_all_convs = self.encoderG(reference)
-        ske_features, ske_all_convs = self.encoderS(sketch)
+        # decoder
+        self.decoderS = DecoderS(in_channels=(256, 512, 1024), base_dim=64)
 
-        # do self attention
-        b, c, h, w = ref_features.size()
-        reference_features_ = ref_features.view(b, c, h * w).contiguous().permute(0, 2, 1)
-        sketch_features_ = ske_features.view(b, c, h * w).contiguous().permute(0, 2, 1)
+        if do_init_weight:
+            self.adapt_layer_reference3.apply(init_net_weight)
+            self.adapt_layer_sketch3.apply(init_net_weight)
+            self.decoderS.apply(init_net_weight)
 
-        ske_features, keys, queries = self.attention(reference_features_, sketch_features_)
+    def __sketch_extract_feature(self, input):
+        feat1, feat2, feat3, _ = self.feature_extraction(input)
+        feat1 = self.adapt_layer_sketch1(feat1)
+        feat2 = self.adapt_layer_sketch2(feat2)
+        feat3 = self.adapt_layer_sketch3(feat3)
 
-        #
-        ske_features = ske_features.permute(0, 2, 1).contiguous().view(b, c, h, w)
+        return feat3, [feat1, feat2, feat3]
 
-        keys = keys.permute(0, 2, 1).contiguous().view(b, c, h, w)
-        queries = queries.permute(0, 2, 1).contiguous().view(b, c, h, w)
+    def __color_extract_feature(self, input):
+        feat1, feat2, feat3, _ = self.feature_extraction(input)
+        feat1 = self.adapt_layer_reference1(feat1)
+        feat2 = self.adapt_layer_reference2(feat2)
+        feat3 = self.adapt_layer_reference3(feat3)
 
-        #
-        output = self.decoderS(ske_features, ske_all_convs)
+        return feat3, [feat1, feat2, feat3]
 
-        return output, queries, keys
+    def __matching(self, reference_sketch_feats, target_sketch_feats):
+        ref_feat1, ref_feat2, ref_feat3 = reference_sketch_feats
+        tgt_feat1, tgt_feat2, tgt_feat3 = target_sketch_feats
+        b, c, h, w = ref_feat3.size()
 
-    def attention(self, reference_features_, sketch_features_):
-        d = reference_features_.size()[-1]
+        # interpolate
+        ref_feat1, ref_feat2 = [F.interpolate(ref_feat, size=(h,w), mode='bilinear', align_corners=True)
+                                for ref_feat in [ref_feat1, ref_feat2]]
+        tgt_feat1, tgt_feat2 = [F.interpolate(tgt_feat, size=(h,w), mode='bilinear', align_corners=True)
+                                for tgt_feat in [tgt_feat1, tgt_feat2]]
 
-        keys = self.tokeys(reference_features_)
-        queries = self.toqueries(sketch_features_)
-        values = self.tovalues(reference_features_)
+        # S2T ~ ref2sketch
+        corr_feat1_s2t = self.matching_layer(ref_feat1, tgt_feat1) # channel: target, spatial: source
+        corr_feat2_s2t = self.matching_layer(ref_feat2, tgt_feat2) # channel: target, spatial: source
+        corr_feat3_s2t = self.matching_layer(ref_feat3, tgt_feat3) # channel: target, spatial: source
 
-        queries = queries / (d ** (1 / 4))
-        keys = keys / (d ** (1 / 4))
+        corr_S2T = corr_feat1_s2t * corr_feat2_s2t * corr_feat3_s2t
+        corr_S2T = self.L2normalize(corr_S2T)
 
-        dot = torch.bmm(queries, keys.transpose(1, 2))
-        dot = F.softmax(dot, dim=2)
+        # T2S ~ sketch2ref
+        corr_feat1_t2s = corr_feat1_s2t.view(b, h*w, h*w).transpose(1, 2).view(b,h*w,h,w)  # (b, ref_h * ref_w, ske_h, ske_w)
+        corr_feat2_t2s = corr_feat2_s2t.view(b, h*w, h*w).transpose(1, 2).view(b,h*w,h,w)  # (b, ref_h * ref_w, ske_h, ske_w)
+        corr_feat3_t2s = corr_feat3_s2t.view(b, h*w, h*w).transpose(1, 2).view(b,h*w,h,w)  # (b, ref_h * ref_w, ske_h, ske_w)
 
-        out = torch.bmm(dot, values)
+        corr_T2S = corr_feat1_t2s * corr_feat2_t2s * corr_feat3_t2s
+        corr_T2S = self.L2normalize(corr_T2S)
 
-        return out + sketch_features_, keys, queries
+        return corr_S2T, corr_T2S
 
+    def __do_attention(self, corr_S2T, reference_color_feat, target_sketch_feat):
+        b, c, h, w = corr_S2T.size()
 
-def up_conv(in_channels, out_channels):
-    return nn.Sequential(
-        spectral_norm(nn.Conv2d(in_channels, out_channels, 3, padding=1)),
-        nn.LeakyReLU(0.2, inplace=True),
-    )
+        corr_S2T_ = corr_S2T #self.find_correspondence.apply_gaussian_kernel(corr_S2T, sigma=self.kernel_sigma)
+        attention = self.find_correspondence.softmax_with_temperature(corr_S2T_, beta=self.beta, d=1)
+
+        context_vector = torch.bmm(
+            attention.view(b, h*w, h*w),
+            reference_color_feat.view(b, -1, h * w).contiguous().transpose(1, 2)
+        )
+
+        target_sketch_feat_combine = context_vector + target_sketch_feat.view(b, -1, h * w).contiguous().transpose(1, 2)
+        target_sketch_feat_combine = target_sketch_feat_combine.permute(0, 2, 1).contiguous().view(b, -1, h, w)
+        return target_sketch_feat_combine
+
+    def L2normalize(self, x, d=1):
+        eps = 1e-6
+        norm = x ** 2
+        norm = norm.sum(dim=d, keepdim=True) + eps
+        norm = norm ** (0.5)
+        return (x / norm)
+
+    def __encode(self, reference_color, reference_sketch, target_sketch):
+        reference_color_feat, reference_color_feats = self.__color_extract_feature(reference_color)
+        reference_sketch_feat, reference_sketch_feats = self.__sketch_extract_feature(reference_sketch)
+        target_sketch_feat, target_sketch_feats = self.__sketch_extract_feature(target_sketch)
+
+        corr_S2T, corr_T2S = self.__matching(reference_sketch_feats, target_sketch_feats)
+        target_sketch_feat_combine = self.__do_attention(corr_S2T, reference_color_feat, target_sketch_feat)
+
+        return target_sketch_feat_combine, \
+               (corr_S2T, corr_T2S), \
+               (reference_color_feats, reference_sketch_feats, target_sketch_feats)
+
+    def __decode(self, target_sketch_feat, target_sketch_feats):
+        output = self.decoderS(target_sketch_feat, target_sketch_feats)
+        return output
+
+    def forward(self, reference_color, reference_sketch, target_sketch, mode='train', GT_src_mask=None, GT_tgt_mask=None):
+        # encoding
+        target_sketch_feat_combine, corrs, feats = self.__encode(reference_color, reference_sketch, target_sketch)
+        corr_S2T, corr_T2S = corrs
+        reference_color_feats, reference_sketch_feats, target_sketch_feats = feats
+
+        # decoding (need debug again)
+        output = self.__decode(target_sketch_feat_combine, target_sketch_feats)
+
+        semantic_output = {}
+        if mode=='train':
+            # establish correspondences
+            grid_S2T, flow_S2T, smoothness_S2T = self.find_correspondence(corr_S2T, GT_src_mask)
+            grid_T2S, flow_T2S, smoothness_T2S = self.find_correspondence(corr_T2S, GT_tgt_mask)
+
+            # estimate warped masks
+            warped_src_mask = F.grid_sample(GT_tgt_mask, grid_S2T, mode='bilinear')
+            warped_tgt_mask = F.grid_sample(GT_src_mask, grid_T2S, mode='bilinear')
+
+            # estimate warped flows
+            warped_flow_S2T = -F.grid_sample(flow_T2S, grid_S2T, mode='bilinear') * GT_src_mask
+            warped_flow_T2S = -F.grid_sample(flow_S2T, grid_T2S, mode='bilinear') * GT_tgt_mask
+            flow_S2T = flow_S2T * GT_src_mask
+            flow_T2S = flow_T2S * GT_tgt_mask
+
+            semantic_output = {
+                'est_src_mask': warped_src_mask, 'smoothness_S2T': smoothness_S2T, 'grid_S2T': grid_S2T,
+                'est_tgt_mask': warped_tgt_mask, 'smoothness_T2S': smoothness_T2S, 'grid_T2S': grid_T2S,
+                'flow_S2T': flow_S2T, 'flow_T2S': flow_T2S,
+                'warped_flow_S2T': warped_flow_S2T, 'warped_flow_T2S': warped_flow_T2S
+            }
+
+        return output, semantic_output
 
 # discriminator
 class DecoderS(nn.Module):
-    def __init__(self):
+    def __init__(self, in_channels=(256, 512, 1024), base_dim=64):
         super(DecoderS, self).__init__()
-        base_dim = 16
 
-        self.resblock_h = ResidulBlock(176, base_dim * 4)
-        self.dconv_up4  = up_conv(in_channels=base_dim * 8, out_channels=base_dim * 4)
-        self.dconv_up3  = up_conv(in_channels=base_dim * 8, out_channels=base_dim * 4)
-        self.dconv_up2  = up_conv(in_channels=base_dim * 6, out_channels=base_dim * 2)
-        self.dconv_up1  = up_conv(in_channels=base_dim * 3, out_channels=base_dim)
+        self.resblock_h = ResidulBlock(in_channels[-1], base_dim * 4)
+        #self.dconv_up4  = up_conv(in_channels=base_dim * 8, out_channels=base_dim * 4)
+        self.dconv_up3  = up_conv(in_channels=base_dim * 4 + in_channels[-2], out_channels=base_dim * 4)
+        self.dconv_up2  = up_conv(in_channels=base_dim * 4 + in_channels[-3], out_channels=base_dim * 2)
+        self.dconv_up1  = up_conv(in_channels=base_dim * 2, out_channels=base_dim)
         self.dconv_last = nn.Sequential(
             spectral_norm(nn.Conv2d(base_dim, 3, 3, 1, 1)),
             nn.Tanh()
@@ -237,30 +168,27 @@ class DecoderS(nn.Module):
 
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
-    def forward(self, h, sketch_all_convs):
-        conv1, conv2, conv3, conv4 = sketch_all_convs
-        # b,      2b,    4b,    4b
+    def forward(self, h, target_sketch_features):
+        feat1, feat2, _ = target_sketch_features
 
         x = self.resblock_h(h)
-        x = self.upsample(x)
-        x = torch.cat([x, conv4], dim = 1)
-
-        x = self.dconv_up4(x)
-        x = self.upsample(x)
-        x = torch.cat([x, conv3], dim=1)
+        x = self.upsample(x) #.125
+        x = torch.cat([x, feat2], dim=1)
 
         x = self.dconv_up3(x)
-        x = self.upsample(x)
-        x = torch.cat([x, conv2], dim=1)
+        x = self.upsample(x) #.25
+        x = torch.cat([x, feat1], dim=1)
 
         x = self.dconv_up2(x)
-        x = self.upsample(x)
-        x = torch.cat([x, conv1], dim=1)
+        x = self.upsample(x) #.5
 
         x = self.dconv_up1(x)
-        out = self.dconv_last(x)
+        x = self.upsample(x) #1
 
-        return out
+        x = self.dconv_last(x)
+
+        return x
+
 
 # discriminator
 class Discriminator(nn.Module):
@@ -283,12 +211,11 @@ class Discriminator(nn.Module):
         return self.net(x)
 
 if __name__ == '__main__':
-    from torchsummary import summary
-
     model = ColorModel()
 
-    sketch = torch.randn((1,1,256,256))
-    ref_color = torch.rand((1,3,256,256))
+    reference_color  = torch.rand((1,3,320,320))
+    reference_sketch = torch.rand((1,3,320,320))
+    target_sketch    = torch.rand((1,3,320,320))
 
-    output, _, _ = model(ref_color, sketch)
-    print (output.size())
+    output, _ = model(reference_color, reference_sketch, target_sketch, mode='!train')
+    print ('output size:', output.size())
