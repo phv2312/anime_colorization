@@ -86,7 +86,7 @@ class ColorModel(nn.Module):
     def __do_attention(self, corr_S2T, reference_color_feat, target_sketch_feat):
         b, c, h, w = corr_S2T.size()
 
-        corr_S2T_ = corr_S2T #self.find_correspondence.apply_gaussian_kernel(corr_S2T, sigma=self.kernel_sigma)
+        corr_S2T_ = corr_S2T
         attention = self.find_correspondence.softmax_with_temperature(corr_S2T_, beta=self.beta, d=1)
 
         context_vector = torch.bmm(
@@ -161,10 +161,9 @@ class DecoderS(nn.Module):
         super(DecoderS, self).__init__()
 
         self.resblock_h = ResidulBlock(in_channels[-1], base_dim * 4)
-        #self.dconv_up4  = up_conv(in_channels=base_dim * 8, out_channels=base_dim * 4)
         self.dconv_up3  = up_conv(in_channels=base_dim * 4 + in_channels[-2], out_channels=base_dim * 4)
-        self.dconv_up2  = up_conv(in_channels=base_dim * 4 + in_channels[-3], out_channels=base_dim * 2)
-        self.dconv_up1  = up_conv(in_channels=base_dim * 2, out_channels=base_dim)
+        self.dconv_up2  = up_conv(in_channels=base_dim * 4 + in_channels[-3], out_channels=base_dim * 3)
+        self.dconv_up1  = up_conv(in_channels=base_dim * 3, out_channels=base_dim)
         self.dconv_last = nn.Sequential(
             spectral_norm(nn.Conv2d(base_dim, 3, 3, 1, 1)),
             nn.Tanh()
