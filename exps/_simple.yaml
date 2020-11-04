@@ -1,16 +1,12 @@
 MODEL_NAME: COLORIZATION_CVPR2020
 LOSSES:
-  TRIPLET:
-    N_POSITIVE: 2
-    K: 2 # n_negative / n_positive
-    MARGIN: 0.5
-    WEIGHT: 1
   WEIGHTS:
-    L1: 50
-    STYLE: 1
-    CONTENT: 1
+    L1: 30
+    STYLE: 50
+    CONTENT: 0.01
     GAN_G: 1
     TRIPLET: 1
+    SM: 1.
 
 MODELS:
   INPUT_HEIGHT: 256
@@ -24,7 +20,7 @@ TRAIN:
   INPUT_DIR: "./simple_data/hor01_sample"
   EPOCH: 10000
   BATCH_SIZE: 1
-  G_LR: 0.00001 #0.0000495
-  D_LR: 0.0002 #0.0000990
+  G_LR: 0.0001
+  D_LR: 0.0002
   N_WORK: 4
 

@@ -2,6 +2,7 @@ import numpy as np
 import random
 import os
 import cv2
+import torch
 from torch.utils import data
 import PIL.Image as Image
 from skimage import measure
@@ -99,7 +100,6 @@ def color_tensor2image(color, mean=0.5, std=0.5):
 
     return color
 
-import torch
 def revert_normalize(tensor_img, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]):
     std  = torch.tensor(std).view(1,1,1,3).permute(0,3,2,1)
     mean = torch.tensor(mean).view(1,1,1,3).permute(0,3,2,1)

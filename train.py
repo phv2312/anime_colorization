@@ -7,7 +7,7 @@ from torch.utils import data
 from torch.utils.tensorboard import SummaryWriter
 import torch.optim as optim
 
-from libs.utils.flow import to_device, create_train_transform, save_model, save_image_local, save_image_tensorboard
+from libs.utils.flow import create_train_transform, save_model, save_image_local, save_image_tensorboard
 from libs.loss.gan_loss import dis_loss, gen_loss
 from libs.loss.content_style_loss import L1StyleContentLoss
 from libs.loss.triplet_loss import SimilarityTripletLoss
@@ -15,10 +15,17 @@ from libs.loss.semantic_loss import semantic_loss_fn
 from libs.nn.color_model import ColorModel, Discriminator
 from libs.dataset.anime_dataset import OneImageAnimeDataset as AnimeDataset
 
+######
+"""
+global parameters
+"""
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+global_iter = 0
+
 def ensure_loss(loss):
     assert loss.requires_grad == True, 'Loss without gradient'
 
-device = torch.device('cuda')
+### end ###
 
 @click.command()
 @click.option('--cfg', default='./exps/_simple.yaml', help='Path to Config Path')
@@ -39,18 +46,18 @@ def main(cfg):
     color_model = ColorModel()
     disc_model  = Discriminator(ch_input=6)
 
-    color_model.cuda()
-    disc_model.cuda()
+    color_model.to(device)
+    disc_model.to(device)
 
     # loss
-    l1_style_content_loss = L1StyleContentLoss().cuda()
-    sim_triplet_loss = SimilarityTripletLoss().cuda()
-    semantic_loss = semantic_loss_fn().cuda()
+    l1_style_content_loss = L1StyleContentLoss().to(device)
+    sim_triplet_loss = None #SimilarityTripletLoss().to(device)
+    semantic_loss = semantic_loss_fn().to(device)
     loss_weights = {}
 
     # optimizer
     color_optim = optim.Adam(color_model.parameters(), lr=train_cfg['G_LR'], betas=(0.5, 0.999))
-    disc_optim = optim.Adam(disc_model.parameters(), lr=train_cfg['D_LR'], betas=(0.5, 0.999))
+    disc_optim  = optim.Adam(disc_model.parameters(), lr=train_cfg['D_LR'], betas=(0.5, 0.999))
 
     # lr scheduler
     color_scheduler = optim.lr_scheduler.StepLR(color_optim, step_size=1000, gamma=0.1)
@@ -68,12 +75,12 @@ def main(cfg):
               (color_optim, disc_optim), #optimizer
               vis_dir, weight_dir, writer, cfg)  # other stuffs
 
-        #color_scheduler.step()
-        #disc_scheduler.step()
+        color_scheduler.step()
+        disc_scheduler.step()
 
     writer.close()
 
-global_iter = 0
+
 def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir, writer, cfg):
     global global_iter
 
@@ -90,7 +97,6 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
     l1_style_content_loss, sim_triplet_loss, semantic_loss = losses
     loss_weight_cfg = cfg['LOSSES']['WEIGHTS']
     lws = {
-        'triplet': loss_weight_cfg['TRIPLET'],
         'l1': loss_weight_cfg['L1'],
         'gan_gen': loss_weight_cfg['GAN_G'],
         'style': loss_weight_cfg['STYLE'],
@@ -157,12 +163,12 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
 
         if global_iter % 10 == 0:
             """
-            >> Save weights
+            >> save weights
             """
-            #save_model(global_iter, weight_dir, color_model, disc_model, color_optimzier, disc_optimizer)
+            save_model(global_iter, weight_dir, color_model, disc_model, color_optimzier, disc_optimizer)
 
             """
-            >> Visualize 
+            >> visualize 
             """
             color_model.eval()
 
@@ -176,7 +182,7 @@ def train(loader, models, losses, loss_weights, optimizers, vis_dir, weight_dir,
                              output, sketch_tgt, color_ref, color_tgt)
 
             """
-            Tensor-board
+            tensor-board
             """
             save_image_tensorboard(global_iter, vis_dir, output, sketch_tgt, color_ref, color_tgt)
 

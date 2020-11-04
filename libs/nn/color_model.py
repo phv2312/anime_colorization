@@ -9,7 +9,7 @@ def init_net_weight(module):
 
 # generator2
 class ColorModel(nn.Module):
-    def __init__(self, do_init_weight=False):
+    def __init__(self, do_init_weight=True):
         super(ColorModel, self).__init__()
         # encoder
         self.feature_extraction = FeatureExtraction()
@@ -30,6 +30,10 @@ class ColorModel(nn.Module):
         self.decoderS = DecoderS(in_channels=(256, 512, 1024), base_dim=64)
 
         if do_init_weight:
+            self.adapt_layer_reference1.apply(init_net_weight)
+            self.adapt_layer_sketch1.apply(init_net_weight)
+            self.adapt_layer_reference2.apply(init_net_weight)
+            self.adapt_layer_sketch2.apply(init_net_weight)
             self.adapt_layer_reference3.apply(init_net_weight)
             self.adapt_layer_sketch3.apply(init_net_weight)
             self.decoderS.apply(init_net_weight)
